@@ -1,0 +1,8 @@
+[wrap-git]
+url = https://github.com/marktsuchida/libtcspc.git
+revision = 37d581b9a35eee0395fd4650c0d6dbff10a9dd08
+depth = 1
+
+[provide]
+dependency_names = libtcspc
+

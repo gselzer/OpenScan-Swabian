@@ -1,0 +1,6 @@
+*~
+.*.sw[lmnop]
+.vscode/
+
+builddir/
+*.osdev
