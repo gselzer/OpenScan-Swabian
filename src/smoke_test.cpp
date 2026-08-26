@@ -13,8 +13,8 @@
 #include <vector>
 
 int main() {
-    // Create virtual device
-    TimeTaggerBase *tagger = createTimeTaggerVirtual();
+    // Create fake device
+    TimeTaggerBase *tagger = createTimeTagger();
 
     Experimental::ExponentialSignalGenerator generator(tagger, 100'000.0);   
     channel_t channel = generator.getChannel();

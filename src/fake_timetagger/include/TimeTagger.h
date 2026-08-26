@@ -14,24 +14,36 @@
 // splits this across two classes (TimeTaggerSource, which TimeTaggerBase
 // publicly inherits from, plus TimeTaggerBase itself); we flatten both
 // into one class here since the split doesn't affect what's callable
-// through a TimeTaggerBase*. Deliberately NOT covered: TimeTaggerHardware
-// / TimeTaggerNetwork / TimeTagger-specific methods (FPGA bitfiles,
-// network server hosting, licensing) -- those only make sense for a real
-// or networked device, and the protected methods TimeTaggerBase uses
-// internally to talk to its own IteratorBase machinery, since our fake
-// measurement classes (see measurements/) don't go through that
-// mechanism at all.
+// through a TimeTaggerBase*. Also covers Tag and IteratorBase, since code
+// in this project builds a custom IteratorBase subclass to receive raw
+// tags. Deliberately NOT covered: TimeTaggerHardware / TimeTaggerNetwork /
+// TimeTagger-specific methods (FPGA bitfiles, network server hosting,
+// licensing), CustomMeasurementBase (the wrapper-language-oriented
+// IteratorBase subclass -- this project subclasses IteratorBase directly,
+// like the vendor's own C++ examples do), and IteratorBase's virtual-channel
+// allocation / getCaptureDuration() / getConfiguration() -- those only make
+// sense for a real device, or aren't used by anything in this project yet.
 //
 // Most methods here are inert stubs (store-and-return-what-was-set, or a
-// fixed plausible default) -- there is no real hardware, clock, or event
-// pipeline underneath them. Actual synthetic event generation is
-// implemented separately (see measurements/TimeTagStream.h and
-// measurements/SignalGenerators.h).
+// fixed plausible default) -- there is no real hardware or clock
+// underneath them. Synthetic event generation is implemented here (for
+// IteratorBase, via a background thread -- see IteratorBase::PumpLoop)
+// and separately in measurements/TimeTagStream.h and
+// measurements/SignalGenerators.h (a pull-based equivalent, predating
+// IteratorBase support here). Both reuse the same
+// TimeTaggerBase::RegisterChannel/GetChannelRate mechanism below.
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <mutex>
+#include <random>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Matches the real SDK's own (macro, not typedef) definitions, so values
@@ -41,7 +53,8 @@
 
 constexpr channel_t CHANNEL_UNUSED = 0xf8000000;
 
-class IteratorBase; // Not implemented by this fake; only used by pointer.
+class IteratorBase; // Full definition below, after TimeTaggerBase; only
+                     // used by pointer/reference up to that point.
 
 struct SoftwareClockState {
     timestamp_t clock_period = 0;
@@ -248,10 +261,252 @@ class TimeTaggerBase {
     SoftwareClockState software_clock_state_;
 };
 
-inline TimeTaggerBase *createTimeTaggerVirtual(std::string const & = "",
-                                                timestamp_t = 0,
-                                                timestamp_t = -1) {
+// A single event delivered from the (simulated) Time Tagger backend.
+// Layout matches the real SDK's Tag exactly (1+1+2+4+8 = 16 bytes, no
+// padding), so anything that depends on that size/layout behaves the same
+// against this fake as against the real header.
+struct Tag {
+    enum class Type : unsigned char {
+        TimeTag = 0,
+        Error = 1,
+        OverflowBegin = 2,
+        OverflowEnd = 3,
+        MissedEvents = 4,
+    };
+
+    Type type = Type::TimeTag;
+    char reserved = 0;
+    unsigned short missed_events = 0;
+    channel_t channel = 0;
+    timestamp_t time = 0;
+
+    Tag() = default;
+    Tag(timestamp_t ts, channel_t ch, Type type = Type::TimeTag)
+        : type(type), channel(ch), time(ts) {}
+};
+
+inline bool operator==(Tag const &a, Tag const &b) {
+    return a.type == b.type && a.channel == b.channel && a.time == b.time &&
+           a.missed_events == b.missed_events;
+}
+
+// Fake of IteratorBase. Drives a background thread that synthesizes
+// Poisson-arrival events -- reusing TimeTaggerBase::RegisterChannel's
+// per-channel rates, same technique as measurements/TimeTagStream.h, just
+// restructured as a push instead of a pull -- for whatever channels the
+// subclass registers, and delivers them via next_impl(). This is enough to
+// exercise a real next_impl()-based acquisition design under simulate=true
+// without hardware; it does not model getCaptureDuration(), getConfiguration(),
+// virtual-channel allocation, or startFor()'s auto-stop-after-duration
+// (nothing in this project uses those yet).
+//
+// IMPORTANT, and true of the real SDK too: the pump thread calls next_impl()
+// (a pure virtual) until stop() has fully returned. Because base-class
+// destructors run *after* the derived class's own destructor body, a
+// subclass MUST call stop() itself, near the top of its own destructor,
+// before tearing down any state next_impl() touches. ~IteratorBase() also
+// calls stop() as a backstop, but by the time it runs, derived state may
+// already be gone -- relying on it alone risks next_impl() running against
+// a partially-destroyed object.
+class IteratorBase {
+  public:
+    IteratorBase(IteratorBase const &) = delete;
+    IteratorBase &operator=(IteratorBase const &) = delete;
+
+    virtual ~IteratorBase() { stop(); }
+
+    void clear() {
+        auto lock = getLock();
+        clear_impl();
+    }
+
+    void start() {
+        if (running_.exchange(true))
+            return;
+        {
+            auto lock = getLock();
+            on_start();
+        }
+        pump_thread_ = std::thread(&IteratorBase::PumpLoop, this);
+    }
+
+    // Fake-only simplification: does not auto-stop after capture_duration.
+    void startFor(timestamp_t /*capture_duration*/, bool clear_first = true) {
+        if (clear_first)
+            clear();
+        start();
+    }
+
+    void stop() {
+        if (!running_)
+            return;
+        {
+            auto lock = getLock();
+            pre_stop();
+        }
+        running_ = false;
+        if (pump_thread_.joinable())
+            pump_thread_.join();
+        auto lock = getLock();
+        on_stop();
+    }
+
+    void abort() {
+        stop();
+        clear();
+    }
+
+    [[nodiscard]] bool isRunning() const { return running_; }
+
+    // Matches real semantics ("roughly equivalent to a polling loop with
+    // sleep()"): safe to call from any thread, never touches pump_thread_
+    // directly.
+    bool waitUntilFinished(std::int64_t timeout_ms = -1) {
+        auto const deadline = std::chrono::steady_clock::now() +
+                               std::chrono::milliseconds(timeout_ms);
+        while (running_) {
+            if (timeout_ms >= 0 && std::chrono::steady_clock::now() >= deadline)
+                return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return true;
+    }
+
+  protected:
+    // base_type_/extra_info_ accepted for signature compatibility with the
+    // real SDK; unused here.
+    explicit IteratorBase(TimeTaggerBase *tagger,
+                           std::string const & /*base_type_*/ = "IteratorBase",
+                           std::string const & /*extra_info_*/ = "")
+        : tagger_(tagger) {}
+
+    void registerChannel(channel_t channel) {
+        auto lock = getLock();
+        registered_channels_.push_back(channel);
+    }
+    void unregisterChannel(channel_t channel) {
+        auto lock = getLock();
+        registered_channels_.erase(
+            std::remove(registered_channels_.begin(),
+                        registered_channels_.end(), channel),
+            registered_channels_.end());
+    }
+
+    void finishInitialization() { start(); }
+
+    virtual bool next_impl(std::vector<Tag> &incoming_tags,
+                            timestamp_t begin_time, timestamp_t end_time) = 0;
+    virtual void clear_impl() {}
+    virtual void on_start() {}
+    virtual void on_stop() {}
+    virtual void pre_stop() {}
+
+    std::unique_lock<std::mutex> getLock() {
+        return std::unique_lock<std::mutex>(mutex_);
+    }
+
+  private:
+    void PumpLoop() {
+        double elapsed_ps = 0.0;
+        auto last = std::chrono::steady_clock::now();
+        std::mt19937_64 rng{std::random_device{}()};
+        std::map<channel_t, double> next_arrival_ps;
+
+        while (running_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+            auto const now = std::chrono::steady_clock::now();
+            double const elapsed_s =
+                std::chrono::duration_cast<std::chrono::duration<double>>(
+                    now - last)
+                    .count();
+            last = now;
+            timestamp_t const begin_time = static_cast<timestamp_t>(elapsed_ps);
+            elapsed_ps += elapsed_s * 1e12;
+            timestamp_t const end_time = static_cast<timestamp_t>(elapsed_ps);
+
+            auto lock = getLock();
+            if (!running_)
+                break;
+
+            std::vector<Tag> batch;
+            for (channel_t const channel : registered_channels_) {
+                double rate_hz;
+                try {
+                    rate_hz = tagger_->GetChannelRate(channel);
+                } catch (std::out_of_range const &) {
+                    continue; // no synthetic rate configured for this
+                              // channel (e.g. RegisterChannel() was never
+                              // called for it); produce no events
+                }
+                if (rate_hz <= 0)
+                    continue;
+
+                std::exponential_distribution<double> interval_dist(rate_hz);
+                auto it = next_arrival_ps.find(channel);
+                if (it == next_arrival_ps.end())
+                    it = next_arrival_ps
+                             .emplace(channel, interval_dist(rng) * 1e12)
+                             .first;
+                while (it->second < elapsed_ps) {
+                    batch.emplace_back(static_cast<timestamp_t>(it->second),
+                                        channel);
+                    it->second += interval_dist(rng) * 1e12;
+                }
+            }
+            std::sort(batch.begin(), batch.end(),
+                      [](Tag const &a, Tag const &b) { return a.time < b.time; });
+
+            next_impl(batch, begin_time, end_time);
+        }
+    }
+
+    TimeTaggerBase *tagger_;
+    std::mutex mutex_;
+    std::atomic<bool> running_{false};
+    std::thread pump_thread_;
+    std::vector<channel_t> registered_channels_;
+};
+
+// Fake-only: the one serial this fake pretends to have plugged in, and the
+// model name it reports for that serial.
+inline constexpr char kFakeSerial[] = "SIM000001";
+inline constexpr char kFakeModel[] = "Simulated Time Tagger";
+
+// Fake of createTimeTagger(): connects to the fake device if the serial
+// matches (or is left empty, meaning "first available"), matching real SDK
+// semantics -- empty serial connects to the first device found, a wrong
+// serial throws. Does not model the `resolution` parameter or
+// createTimeTaggerVirtual/TimeTaggerHardware/TimeTaggerNetwork; nothing in
+// this project uses those yet (see file-level comment above).
+inline TimeTaggerBase *createTimeTagger(std::string const &serial = "") {
+    if (!serial.empty() && serial != kFakeSerial) {
+        throw std::runtime_error("No Time Tagger device with serial '" +
+                                  serial + "' found");
+    }
     return new TimeTaggerBase();
 }
 
 inline void freeTimeTagger(TimeTaggerBase *tagger) { delete tagger; }
+
+// Fake-only: no real hardware to scan, so return the one fixed placeholder
+// serial (matching real SDK's "serial,model" format when requested), so
+// callers can exercise the same enumerate-then-connect path used with real
+// hardware without branching on build mode.
+inline std::vector<std::string> scanTimeTagger(bool include_model_name = false) {
+    if (include_model_name)
+        return {std::string(kFakeSerial) + "," + kFakeModel};
+    return {kFakeSerial};
+}
+
+// Fake of getTimeTaggerModel(): reports the model for the one serial this
+// fake knows about. The real SDK's doc comment doesn't specify behavior for
+// an unrecognized serial; we throw, matching createTimeTagger()'s handling
+// of a wrong serial above.
+inline std::string getTimeTaggerModel(std::string const &serial) {
+    if (serial != kFakeSerial) {
+        throw std::runtime_error("No Time Tagger device with serial '" +
+                                  serial + "' found");
+    }
+    return kFakeModel;
+}

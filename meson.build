@@ -78,6 +78,29 @@ openscandevicelib_dep = dependency(
     ]
 )
 
+src = files(
+    'src/EventPipeline.cpp',
+    'src/TimeTagger.cpp',
+    'src/TimeTaggerSettings.cpp',
+)
+
+osdev = shared_module(
+    'OpenScanSwabian',
+    [
+        src,
+    ],
+    name_suffix: 'osdev',
+    include_directories: [
+        include_directories('src'),
+        include_directories('src/fake_timetagger'),
+    ],
+    dependencies: [
+        libtcspc_dep,
+        openscandevicelib_dep,
+        time_tagger_dep,
+    ],
+)
+
 executable(
     'smoke_test',
     'src/smoke_test.cpp',
