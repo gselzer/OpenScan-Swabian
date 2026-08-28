@@ -101,12 +101,3 @@ osdev = shared_module(
         time_tagger_dep,
     ],
 )
-
-executable(
-    'smoke_test',
-    'src/smoke_test.cpp',
-    dependencies: [
-        time_tagger_dep,
-        libtcspc_dep,
-    ],
-)

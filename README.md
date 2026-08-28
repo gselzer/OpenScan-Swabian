@@ -31,8 +31,6 @@ image.
 - `tools/dump_tags.py` — decodes a raw Time Tagger tag dump (the format
   written by the SDK's `Dump` measurement, and by this module's own "Save Raw
   Data" setting) into human-readable text.
-- `src/smoke_test.cpp` — a minimal standalone program exercising the
-  (fake or real) Time Tagger SDK directly, independent of OpenScanLib/MMCore.
 
 ## Building
 
@@ -47,7 +45,7 @@ ninja -C builddir
 ```
 
 This produces `OpenScanSwabian.osdev` (the OpenScan device module, loadable
-by OpenScanLib/Micro-Manager) and `smoke_test.exe`.
+by OpenScanLib/Micro-Manager).
 
 ### Simulate vs. real hardware
 
