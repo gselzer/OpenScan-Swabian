@@ -1,7 +1,6 @@
 #include <OpenScanDeviceLib.h>
 #include <TimeTagger.h>
 #include <TimeTaggerPrivate.h>
-#include <measurements/Dump.h>
 #include <EventPipeline.h>
 
 #include <string>
@@ -175,27 +174,13 @@ static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acq) {
     auto ctx = tcspc::context::create();
 
     try {
+        // Raw-tag dumping (the "Save Raw Data" setting) is handled inside
+        // EventPipeline itself now -- see RawTagDumpSink's comment in
+        // EventPipeline.cpp for why it's a broadcast branch of the live
+        // pipeline rather than a second, independent measurement.
         GetData(device)->pipeline = std::make_unique<EventPipeline>(device, acq, ctx);
     } catch (const std::runtime_error &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
-    }
-
-    if (GetData(device)->saveRawData) {
-        try {
-            GetData(device)->dumpPipeline = std::make_unique<Dump>(
-                GetData(device)->tagger,
-                "C:\\Users\\gjselzer\\code\\openscan-lsm\\OpenScan-Swabian\\raw",
-                -1,
-                std::vector<channel_t>{
-                    GetData(device)->syncChannel,
-                    GetData(device)->photonChannel,
-                    -1 * GetData(device)->photonChannel,
-                    GetData(device)->lineClockChannel,
-                }
-            );
-        } catch (const std::runtime_error &e) {
-            return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
-        }
     }
 
     OScDev_Log_Info(device, "Arming Swabian Time Tagger acquisition");
@@ -209,25 +194,12 @@ static OScDev_Error Start(OScDev_Device *) {
 
 static OScDev_Error Stop(OScDev_Device *device) {
     GetData(device)->pipeline.reset();
-    GetData(device)->dumpPipeline.reset();
     return OScDev_OK;
 }
 
 static OScDev_Error IsRunning(OScDev_Device *device, bool *isRunning) {
     auto& pipeline = GetData(device)->pipeline;
-    auto& dumpPipeline = GetData(device)->dumpPipeline;
-    bool const mainRunning = pipeline && pipeline->isRunning();
-    if (!mainRunning && dumpPipeline && dumpPipeline->isRunning()) {
-        // Dump has no concept of "acquisition done" on its own -- see
-        // measurements/Dump.h's own comment: it just keeps running until
-        // told to stop, matching real SDK behavior. Since we always want
-        // every tag from the acquisition dumped, force it to stop as soon
-        // as we notice the main pipeline has already finished; otherwise
-        // IsRunning() would report true forever and nothing would ever
-        // detect the acquisition as complete.
-        dumpPipeline->stop();
-    }
-    *isRunning = mainRunning || (dumpPipeline && dumpPipeline->isRunning());
+    *isRunning = pipeline && pipeline->isRunning();
     OScDev_Log_Info(device, ("Swabian Time Tagger acquisition is running: " + std::string(*isRunning ? "true" : "false")).c_str());
     return OScDev_OK;
 }
@@ -236,16 +208,6 @@ static OScDev_Error Wait(OScDev_Device *device) {
     auto& pipeline = GetData(device)->pipeline;
     if (pipeline) {
         pipeline->waitUntilFinished();
-    }
-
-    auto &dumpPipeline = GetData(device)->dumpPipeline;
-    if (dumpPipeline) {
-        // Same reasoning as IsRunning() above: Dump never finishes on its
-        // own, so waitUntilFinished() here would block forever. The main
-        // pipeline (waited for just above) has finished by this point, so
-        // force the dump to stop rather than waiting for something that
-        // will never happen.
-        dumpPipeline->stop();
     }
     return OScDev_OK;
 }

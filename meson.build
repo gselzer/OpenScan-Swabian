@@ -82,6 +82,7 @@ src = files(
     'src/EventPipeline.cpp',
     'src/TimeTagger.cpp',
     'src/TimeTaggerSettings.cpp',
+    'src/UniqueFileName.cpp',
 )
 
 osdev = shared_module(

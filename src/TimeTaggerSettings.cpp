@@ -2,6 +2,7 @@
 #include <TimeTagger.h>
 #include <OpenScanDeviceLib.h>
 
+#include <cstring>
 #include <limits>
 
 static inline TimeTagger_PrivateData *
@@ -101,13 +102,13 @@ public:
     };
 };
 
-class SaveFilesSetting {
+class SaveHistogramsSetting {
     static OScDev_Error Get(OScDev_Setting *setting, bool *value) {
-        *value = GetSettingDeviceData(setting)->saveFiles;
+        *value = GetSettingDeviceData(setting)->saveHistograms;
         return OScDev_OK;
     }
     static OScDev_Error Set(OScDev_Setting *setting, bool value) {
-        GetSettingDeviceData(setting)->saveFiles = value;
+        GetSettingDeviceData(setting)->saveHistograms = value;
         return OScDev_OK;
     }
 
@@ -184,6 +185,25 @@ public:
     static inline OScDev_SettingImpl impl = {
         .GetBool = Get,
         .SetBool = Set,
+    };
+};
+
+class FileNamePrefixSetting {
+    static OScDev_Error Get(OScDev_Setting *setting, char *value) {
+        strncpy_s(value, OScDev_MAX_STR_SIZE,
+                  GetSettingDeviceData(setting)->fileNamePrefix.c_str(),
+                  _TRUNCATE);
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, const char *value) {
+        GetSettingDeviceData(setting)->fileNamePrefix = value;
+        return OScDev_OK;
+    }
+
+public:
+    static inline OScDev_SettingImpl impl = {
+        .GetString = Get,
+        .SetString = Set,
     };
 };
 
@@ -266,9 +286,9 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **se
 
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
         &s,
-        "Save Files",
+        "Save Histograms",
         OScDev_ValueType_Bool,
-        &SaveFilesSetting::impl,
+        &SaveHistogramsSetting::impl,
         device
     ));
     if (err) {
@@ -305,6 +325,18 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **se
         "Save Raw Data",
         OScDev_ValueType_Bool,
         &SaveRawDataSetting::impl,
+        device
+    ));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
+        &s,
+        "File Name Prefix",
+        OScDev_ValueType_String,
+        &FileNamePrefixSetting::impl,
         device
     ));
     if (err) {

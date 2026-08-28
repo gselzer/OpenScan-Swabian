@@ -1,7 +1,11 @@
 #include "EventPipeline.h"
+#include "UniqueFileName.h"
 
 #include <bit>
 #include <fstream>
+#include <optional>
+#include <stdexcept>
+#include <string>
 
 
 // Calls OpenScanLib's frame callback with a properly-sized width*height
@@ -71,6 +75,45 @@ public:
 
     [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
         return tcspc::processor_info(this, "HistogramDumpSink");
+    }
+
+    [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
+        return tcspc::processor_graph().push_entry_point(this);
+    }
+};
+
+// Writes every raw tag to disk, in the vendor SDK's raw dump format
+// (back-to-back 16-byte records, decodable with tools/dump_tags.py) --
+// same format as the real SDK's Dump measurement, and what "Save Raw
+// Data" used to be wired to (a second, independent Dump/IteratorBase
+// instance pulling directly from the tagger). That approach doesn't work
+// in simulate mode: each IteratorBase there runs its own PumpLoop with
+// its own independently-seeded RNG, so two separate measurements
+// "watching the same channels" would each generate a DIFFERENT random
+// realization of the gated-photon noise -- the dump would never actually
+// match what the live pipeline processed. Tapping the live tag stream
+// here instead (via the broadcast in make_processor, gated on
+// saveRawData) guarantees the dump is byte-for-byte what was actually
+// processed, and matches real hardware too, where there's only one
+// physical event stream feeding every consumer either way.
+class RawTagDumpSink {
+    std::ofstream file_;
+public:
+    explicit RawTagDumpSink(std::string const &filename)
+        : file_(filename, std::ios::binary | std::ios::trunc) {
+        if (!file_)
+            throw std::runtime_error(
+                "RawTagDumpSink: could not open file '" + filename + "'");
+    }
+
+    void handle(tcspc::swabian_tag_event const &event) {
+        file_.write(reinterpret_cast<char const *>(event.bytes.data()),
+                     static_cast<std::streamsize>(event.bytes.size()));
+    }
+    void flush() { file_.flush(); }
+
+    [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
+        return tcspc::processor_info(this, "RawTagDumpSink");
     }
 
     [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
@@ -193,30 +236,18 @@ auto make_processor(
     std::int32_t const bin_width =
         (data->maxDiffTime + num_bins - 1) / num_bins;
 
-    // Full per-pixel TCSPC histogram (derived bin_width, real
-    // histogramBins) -- debug-dumped to disk, not sent to OpenScanLib.
-    auto full_pixel_chain =
-    map_to_datapoints<time_correlated_detection_event<>>(
-        difftime_data_mapper(),
-    map_to_bins(
-        linear_bin_mapper(
-            arg::offset{0},
-            arg::bin_width{bin_width},
-            // linear_bin_mapper's own parameter is the index of the last
-            // bin (num_bins - 1), not a bin count -- num_bins is
-            // guaranteed >= 16 by HistogramBinsSetting's discrete-values
-            // list (never includes 0), so this can't underflow.
-            arg::max_bin_index{std::uint16_t(num_bins - 1)}),
-    cluster_bin_increments<pixel_start_event, pixel_stop_event>(
-    count<bin_increment_cluster_event<>>(
-        ctx->tracker<count_accessor>("pixel_counter"),
-    make_full_histo_proc<Cumulative>(data, acq, ctx)))));
+    using tc_event_list = type_list<
+        time_correlated_detection_event<>,
+        pixel_start_event,
+        pixel_stop_event,
+        time_reached_event<>>;
 
     // Single-bin "intensity" equivalent (max_bin_index=0, clamp=true forces
     // every photon into bin 0 regardless of its difftime) -- this is the
     // one actually sent live to OpenScanLib via CallFrameCallback, since
     // that contract only supports one u16 sample per pixel (see
-    // CallFrameCallbackSink's comment).
+    // CallFrameCallbackSink's comment). Always built: this is the live
+    // image path.
     auto live_pixel_chain =
     map_to_datapoints<time_correlated_detection_event<>>(
         difftime_data_mapper(),
@@ -231,20 +262,53 @@ auto make_processor(
         ctx->tracker<count_accessor>("live_pixel_counter"),
     make_live_histo_proc<Cumulative>(data, acq, ctx)))));
 
+    // The full per-pixel histogram (histogramBins bins/pixel, debug-dumped
+    // to disk by HistogramDumpSink) is only useful when the "Save
+    // Histograms" setting is on. Broadcasting every time-correlated event
+    // to it as well as to live_pixel_chain roughly doubles consumer-side
+    // per-event work (map_to_datapoints -> map_to_bins ->
+    // cluster_bin_increments -> scan_histograms, all over again, plus the
+    // dump itself), for no benefit when nobody's consuming it. So it's
+    // built -- and the broadcast exists at all -- only inside this branch;
+    // when the setting is off, tc_downstream is just live_pixel_chain,
+    // type-erased to the same interface so both arms of the branch have a
+    // common type to hand to merge() below.
+    type_erased_processor<tc_event_list> tc_downstream =
+        [&]() -> type_erased_processor<tc_event_list> {
+        if (!data->saveHistograms)
+            return type_erased_processor<tc_event_list>(
+                std::move(live_pixel_chain));
+
+        // Full per-pixel TCSPC histogram (derived bin_width, real
+        // histogramBins) -- debug-dumped to disk, not sent to OpenScanLib.
+        auto full_pixel_chain =
+        map_to_datapoints<time_correlated_detection_event<>>(
+            difftime_data_mapper(),
+        map_to_bins(
+            linear_bin_mapper(
+                arg::offset{0},
+                arg::bin_width{bin_width},
+                // linear_bin_mapper's own parameter is the index of the
+                // last bin (num_bins - 1), not a bin count -- num_bins is
+                // guaranteed >= 16 by HistogramBinsSetting's
+                // discrete-values list (never includes 0), so this can't
+                // underflow.
+                arg::max_bin_index{std::uint16_t(num_bins - 1)}),
+        cluster_bin_increments<pixel_start_event, pixel_stop_event>(
+        count<bin_increment_cluster_event<>>(
+            ctx->tracker<count_accessor>("pixel_counter"),
+        make_full_histo_proc<Cumulative>(data, acq, ctx)))));
+
+        return type_erased_processor<tc_event_list>(
+            broadcast<tc_event_list>(
+                std::move(full_pixel_chain),
+                std::move(live_pixel_chain)));
+    }();
+
     auto [tc_merge, start_stop_merge] =
-    merge<type_list<
-        time_correlated_detection_event<>,
-        pixel_start_event,
-        pixel_stop_event,
-        time_reached_event<>>>(
-            arg::max_buffered<>{1 << 20},
-    broadcast<type_list<
-        time_correlated_detection_event<>,
-        pixel_start_event,
-        pixel_stop_event,
-        time_reached_event<>>>(
-        std::move(full_pixel_chain),
-        std::move(live_pixel_chain)));
+    merge<tc_event_list>(
+        arg::max_buffered<>{1 << 20},
+        std::move(tc_downstream));
 
     auto [sync_merge, cfd_merge] =
     merge<type_list<detection_event<>, time_reached_event<>>>(
@@ -264,10 +328,21 @@ auto make_processor(
     auto photon_processor =
     pair_one_between(
         arg::start_channel{data->photonChannel},
-        std::array{data->photonChannel},
+        // Stop channel is the FALLING edge of the same pulse (negative
+        // channel number -- see decode_swabian_tags/the raw dump's
+        // "channel=-3" convention), not the rising edge again -- pairs a
+        // photon pulse's rise with its own fall, per "Max Photon Pulse
+        // Width"'s meaning.
+        std::array{-data->photonChannel},
         arg::time_window{std::int64_t(data->maxPhotonPulseWidth)},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
-    time_correlate_at_midpoint(
+    // UseStartChannel=true: stamp the emitted pulse event's channel from
+    // the start (rising, +photonChannel) side of the pair, not the stop
+    // (falling, -photonChannel) side -- downstream (the sync/photon
+    // pair_all_between below) matches on +photonChannel, so a pulse
+    // event carrying the falling edge's negative channel would never
+    // correlate with anything.
+    time_correlate_at_midpoint<default_numeric_traits, true>(
     remove_time_correlation(
     recover_order<type_list<detection_event<>, time_reached_event<>>>(
         arg::time_window{std::int64_t(data->maxPhotonPulseWidth)},
@@ -297,16 +372,9 @@ auto make_processor(
         "pixel time is such that pixel stop occurs after next pixel start",
     std::move(start_stop_merge))))));
 
-    return
+    using raw_event_list = type_list<swabian_tag_event>;
 
-    batch<swabian_tag_event>(
-        recycling_bucket_source<swabian_tag_event>::create(),
-        arg::batch_size<std::size_t>{1 << 15},
-    real_time_buffer<bucket<swabian_tag_event>>(
-        arg::threshold<std::size_t>{2},
-        std::chrono::milliseconds{500},
-        ctx->tracker<buffer_accessor>("tag_buffer"),
-    unbatch<bucket<swabian_tag_event>>(
+    auto rest_of_chain =
     decode_swabian_tags(
     count<detection_event<>>(ctx->tracker<count_accessor>("record_counter"),
     // TODO: On real hardware, a fixed-size circular FIFO means that when
@@ -347,7 +415,44 @@ auto make_processor(
         }),
         std::move(sync_processor),
         std::move(photon_processor),
-        std::move(pixel_marker_processor)))))))))));
+        std::move(pixel_marker_processor))))))));
+
+    // Raw-tag dump, gated on "Save Raw Data" -- see RawTagDumpSink's
+    // comment for why this taps the live stream via a broadcast here
+    // instead of running as a second, independent Dump/IteratorBase
+    // measurement. Filename follows OpenScan-BH_SPC's own scheme
+    // (File Name Prefix setting + UniqueFileName's "_NNNN" index) --
+    // see UniqueFileName.h for why, and a note on alternatives.
+    type_erased_processor<raw_event_list> raw_tag_downstream =
+        [&]() -> type_erased_processor<raw_event_list> {
+        if (!data->saveRawData)
+            return type_erased_processor<raw_event_list>(
+                std::move(rest_of_chain));
+
+        std::optional<std::string> const unique_name =
+            UniqueFileName(data->fileNamePrefix, {".raw"});
+        if (!unique_name)
+            throw std::runtime_error(
+                "Could not find a unique file name for raw data (prefix '" +
+                data->fileNamePrefix + "')");
+
+        return type_erased_processor<raw_event_list>(
+            broadcast<raw_event_list>(
+                RawTagDumpSink(*unique_name + ".raw"),
+                std::move(rest_of_chain)));
+    }();
+
+    return
+
+    batch<swabian_tag_event>(
+        recycling_bucket_source<swabian_tag_event>::create(),
+        arg::batch_size<std::size_t>{1 << 15},
+    real_time_buffer<bucket<swabian_tag_event>>(
+        arg::threshold<std::size_t>{2},
+        std::chrono::milliseconds{500},
+        ctx->tracker<buffer_accessor>("tag_buffer"),
+    unbatch<bucket<swabian_tag_event>>(
+        std::move(raw_tag_downstream))));
     // clang-format on
 };
 

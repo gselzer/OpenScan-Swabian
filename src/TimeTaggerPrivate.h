@@ -1,6 +1,5 @@
 #pragma once
 
-#include <measurements/Dump.h>
 #include <memory>
 #include <string>
 #include <TimeTagger.h>
@@ -11,7 +10,6 @@ public:
     std::string serial;
     TimeTaggerBase *tagger = nullptr;
     std::unique_ptr<IteratorBase> pipeline = nullptr;
-    std::unique_ptr<Dump> dumpPipeline = nullptr;
 
     int32_t lineClockChannel = 1;
     int32_t syncChannel = 2;
@@ -24,8 +22,9 @@ public:
     bool cumulative = false;
     int32_t histogramBins = 256;
 
-    bool saveFiles = false;
+    bool saveHistograms = false;
     bool saveRawData = false;
+    std::string fileNamePrefix = "OpenScan-Swabian";
 };
 
 static inline class TimeTagger_PrivateData *GetData(OScDev_Device *device) {

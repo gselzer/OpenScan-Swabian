@@ -121,7 +121,15 @@ class TimeTagStream {
                             t + kSimulatedPhotonPulseWidth));
                         buffer.channels_.push_back(-kSimulatedPhotonChannel);
                     }
-                    t += gate_dist(rng_) * 1e12;
+                    // Schedule the next candidate from this pulse's FALLING
+                    // edge, not its rising edge -- otherwise a short draw
+                    // can land the next rising edge before this pulse's
+                    // falling edge, producing two rising transitions in a
+                    // row on the same channel, which is not physically
+                    // possible for a real detector pulse (a single digital
+                    // line's edges must strictly alternate).
+                    t += static_cast<double>(kSimulatedPhotonPulseWidth) +
+                         gate_dist(rng_) * 1e12;
                 } else {
                     // Past this period's gate -- jump straight to the start
                     // of the next one instead of continuing to draw

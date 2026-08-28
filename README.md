@@ -129,22 +129,32 @@ falling edge) that this module expects each signal to be wired to:
   > the histogram's range fully covers **Max Diff Time** and avoids photon loss.
 - **Cumulative** (default `false`) — if enabled, the per-pixel histogram
   accumulates across the whole acquisition instead of resetting every frame.
+- **Save Histograms** (default `false`) — when enabled, the full per-pixel
+  histogram (Histogram Bins bins/pixel) is additionally computed and
+  written to `histogram_debug.bin` (next to the executable) once per frame,
+  for offline inspection. This is off by default because computing and
+  dumping it roughly doubles per-event processing cost and writes a large
+  file (`width * height * Histogram Bins * 2` bytes) every frame — leave it
+  off for normal/live acquisitions and enable it only when you need to
+  inspect the underlying histogram data.
 
 ### Live image
 
 Only the total photon count per pixel (summed across all histogram bins,
-independent of Histogram Bins) is sent to OpenScanLib/Micro-Manager
-as the live/displayed image — the frame callback contract only supports one
-16-bit sample per pixel. The full per-pixel histogram is computed
-separately and is not currently sent anywhere useful by default (see "Save
-Raw Data" below for one way to get at underlying event data).
+independent of Histogram Bins) is sent to OpenScanLib/Micro-Manager as the
+live/displayed image — the frame callback contract only supports one 16-bit
+sample per pixel. 
 
 ### File output
 
-- **Save Files** (default `false`) — currently unused/not wired up.
 - **Save Raw Data** (default `false`) — when enabled, writes every raw tag
   received during the acquisition to a file in the vendor SDK's raw dump
   format (16-byte records; decode with `tools/dump_tags.py`).
+- **File Name Prefix** (default `OpenScan-Swabian`) — path prefix for saved
+  files; may include a directory (e.g. `C:/Data/myexperiment`) or be a bare
+  name (relative to Micro-Manager's working directory). Each acquisition's
+  actual filename is `<prefix>_NNNN.raw`, where `NNNN` (0000-9999) is the
+  smallest index not already in use.
 
 ## Simulate mode details
 
