@@ -49,7 +49,7 @@ public:
     }
 };
 
-// DEBUG: terminal sink for the full per-pixel histogram (maxBinIndex+1
+// DEBUG: terminal sink for the full per-pixel histogram (histogramBins
 // bins/pixel) -- writes it to a known location for offline inspection
 // instead of sending it to OpenScanLib (which has no way to receive a
 // per-pixel histogram cube through CallFrameCallback -- see
@@ -78,7 +78,7 @@ public:
     }
 };
 
-// Full per-pixel histogram (maxBinIndex+1 bins/pixel) -- debug-dumped to
+// Full per-pixel histogram (histogramBins bins/pixel) -- debug-dumped to
 // disk, not sent to OpenScanLib. See HistogramDumpSink's comment.
 template <bool Cumulative>
 auto make_full_histo_proc(
@@ -97,7 +97,7 @@ auto make_full_histo_proc(
             scan_histograms<histogram_policy::emit_concluding_events,
                             reset_event>(
                 arg::num_elements{std::size_t(width * height)},
-                arg::num_bins{std::size_t(data->maxBinIndex) + 1},
+                arg::num_bins{std::size_t(data->histogramBins)},
                 arg::max_per_bin<u16>{65535}, bsource,
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("full_frame_counter"),
@@ -106,7 +106,7 @@ auto make_full_histo_proc(
     } else {
         return scan_histograms<histogram_policy::clear_every_scan>(
             arg::num_elements{std::size_t(width * height)},
-            arg::num_bins{std::size_t(data->maxBinIndex) + 1},
+            arg::num_bins{std::size_t(data->histogramBins)},
             arg::max_per_bin<u16>{65535}, bsource,
             select<type_list<histogram_array_event<>>>(
                 count<histogram_array_event<>>(
@@ -123,7 +123,7 @@ template <bool Cumulative>
 auto make_live_histo_proc(
     TimeTagger_PrivateData * /*data*/, // unused: the intensity branch's
                                         // binning is fixed (1 bin, clamped),
-                                        // not derived from binWidth/maxBinIndex
+                                        // not derived from histogramBins
     OScDev_Acquisition *acq,
     std::shared_ptr<tcspc::context> const &ctx
 ) {
@@ -179,16 +179,34 @@ auto make_processor(
 
     uint32_t x, y, width, height;
     OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
-    // Full per-pixel TCSPC histogram (real bin_width/maxBinIndex) -- debug-
-    // dumped to disk, not sent to OpenScanLib.
+
+    // pair_all_between guarantees every correlated photon's difftime is
+    // less than maxDiffTime, so the histogram's covered range
+    // (bin_width * num_bins) must be at least maxDiffTime for none of them
+    // to be silently dropped by the bin mapper. Ceiling division instead
+    // always rounds bin_width UP, so bin_width * num_bins >= maxDiffTime
+    // always holds; the only cost is the covered range overshooting
+    // maxDiffTime by at most num_bins - 1 ps (one bin's worth of rounding
+    // error spread across the whole histogram), which is a far cheaper
+    // trade than losing real data.
+    std::int32_t const num_bins = data->histogramBins;
+    std::int32_t const bin_width =
+        (data->maxDiffTime + num_bins - 1) / num_bins;
+
+    // Full per-pixel TCSPC histogram (derived bin_width, real
+    // histogramBins) -- debug-dumped to disk, not sent to OpenScanLib.
     auto full_pixel_chain =
     map_to_datapoints<time_correlated_detection_event<>>(
         difftime_data_mapper(),
     map_to_bins(
         linear_bin_mapper(
             arg::offset{0},
-            arg::bin_width{std::int32_t(data->binWidth)},
-            arg::max_bin_index{std::uint16_t(data->maxBinIndex)}),
+            arg::bin_width{bin_width},
+            // linear_bin_mapper's own parameter is the index of the last
+            // bin (num_bins - 1), not a bin count -- num_bins is
+            // guaranteed >= 16 by HistogramBinsSetting's discrete-values
+            // list (never includes 0), so this can't underflow.
+            arg::max_bin_index{std::uint16_t(num_bins - 1)}),
     cluster_bin_increments<pixel_start_event, pixel_stop_event>(
     count<bin_increment_cluster_event<>>(
         ctx->tracker<count_accessor>("pixel_counter"),

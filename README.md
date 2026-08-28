@@ -111,8 +111,8 @@ falling edge) that this module expects each signal to be wired to:
 - **Max Diff Time** (ps, default `15000`) — the maximum allowed time between
   a sync tick and a photon detection for them to be correlated as "this
   photon resulted from this sync pulse." This is the parameter that actually
-  bounds the histogram's meaningful time range (see "Bin Width and Max Bin
-  Index" below) — it should be set based on the laser's sync period and the
+  bounds the histogram's meaningful time range (see "Histogram binning"
+  below) — it should be set based on the laser's sync period and the
   fluorophore's expected decay time, **not** based on the pixel dwell time.
   Those are unrelated: pixel dwell time is about how long the scanner stays
   at one spatial position, while Max Diff Time is about how long after a
@@ -122,24 +122,18 @@ falling edge) that this module expects each signal to be wired to:
 
 ### Histogram binning
 
-- **Bin Width** (ps, default `1`) and **Max Bin Index** (default `255`) —
-  together define the per-pixel TCSPC histogram: `Max Bin Index + 1` bins,
-  each `Bin Width` picoseconds wide, covering difftimes
-  `[0, Bin Width * (Max Bin Index + 1))`. A photon whose difftime falls
-  outside that range is not counted. For this to cover the full range
-  photons can actually arrive in (bounded by **Max Diff Time**, above), you
-  generally want `Bin Width * (Max Bin Index + 1) >= Max Diff Time`;
-  otherwise the effective decay window is silently narrower than what Max
-  Diff Time allows. (This coupling is a known ergonomics gap — see the
-  open TODO to derive Bin Width automatically from Max Diff Time and Max Bin
-  Index instead of requiring both to be kept in sync by hand.)
+- **Histogram Bins** (default `256`) — the per-pixel TCSPC histogram has this many bins, covering difftimes `[0, Max Diff Time)`.
+
+  > [!NOTE]
+  > The bin width of the TCSPC histogram is derived as `ceil(Max Diff Time / Histogram Bins)`, so
+  > the histogram's range fully covers **Max Diff Time** and avoids photon loss.
 - **Cumulative** (default `false`) — if enabled, the per-pixel histogram
   accumulates across the whole acquisition instead of resetting every frame.
 
 ### Live image
 
 Only the total photon count per pixel (summed across all histogram bins,
-independent of Bin Width/Max Bin Index) is sent to OpenScanLib/Micro-Manager
+independent of Histogram Bins) is sent to OpenScanLib/Micro-Manager
 as the live/displayed image — the frame callback contract only supports one
 16-bit sample per pixel. The full per-pixel histogram is computed
 separately and is not currently sent anywhere useful by default (see "Save

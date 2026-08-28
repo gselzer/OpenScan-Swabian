@@ -118,37 +118,38 @@ public:
     };
 };
 
-class BinWidthSetting {
+class HistogramBinsSetting {
     static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
-        *value = GetSettingDeviceData(setting)->binWidth;
+        *value = GetSettingDeviceData(setting)->histogramBins;
         return OScDev_OK;
     }
     static OScDev_Error Set(OScDev_Setting *setting, int32_t value) {
-        GetSettingDeviceData(setting)->binWidth = value;
+        GetSettingDeviceData(setting)->histogramBins = value;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetNumericConstraintType(OScDev_Setting *, OScDev_ValueConstraint *constraintType) {
+        *constraintType = OScDev_ValueConstraint_DiscreteValues;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetDiscreteValues(OScDev_Setting *, OScDev_NumArray **values) {
+        // A discrete range is enforced, but purely for convenience
+        // (i.e. no reason I know of that we couldn't widen it later).
+        static const int32_t values_array[] = {
+            16, 32, 64, 128, 256, 512, 1024, 2048, 4096,
+        };
+        *values = OScDev_NumArray_Create();
+        for (int32_t v : values_array) {
+            OScDev_NumArray_Append(*values, v);
+        }
         return OScDev_OK;
     }
 
 public:
     static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
         .GetInt32 = Get,
         .SetInt32 = Set,
-    };
-};
-
-class MaxBinIndexSetting {
-    static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
-        *value = GetSettingDeviceData(setting)->maxBinIndex;
-        return OScDev_OK;
-    }
-    static OScDev_Error Set(OScDev_Setting *setting, int32_t value) {
-        GetSettingDeviceData(setting)->maxBinIndex = value;
-        return OScDev_OK;
-    }
-
-public:
-    static inline OScDev_SettingImpl impl = {
-        .GetInt32 = Get,
-        .SetInt32 = Set,
+        .GetInt32DiscreteValues = GetDiscreteValues,
     };
 };
 
@@ -277,21 +278,9 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **se
 
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
         &s,
-        "Bin Width",
+        "Histogram Bins",
         OScDev_ValueType_Int32,
-        &BinWidthSetting::impl,
-        device
-    ));
-    if (err) {
-        goto error;
-    }
-    OScDev_PtrArray_Append(*settings, s);
-
-    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
-        &s,
-        "Max Bin Index",
-        OScDev_ValueType_Int32,
-        &MaxBinIndexSetting::impl,
+        &HistogramBinsSetting::impl,
         device
     ));
     if (err) {

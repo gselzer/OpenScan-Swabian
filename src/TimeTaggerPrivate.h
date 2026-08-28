@@ -22,8 +22,7 @@ public:
     int32_t maxDiffTime = 15'000; // picoseconds
 
     bool cumulative = false;
-    int32_t binWidth = 1;
-    int32_t maxBinIndex = 255;
+    int32_t histogramBins = 256;
 
     bool saveFiles = false;
     bool saveRawData = false;
