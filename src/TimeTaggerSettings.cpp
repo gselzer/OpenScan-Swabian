@@ -169,6 +169,23 @@ public:
     };
 };
 
+class SaveRawDataSetting {
+    static OScDev_Error Get(OScDev_Setting *setting, bool *value) {
+        *value = GetSettingDeviceData(setting)->saveRawData;
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, bool value) {
+        GetSettingDeviceData(setting)->saveRawData = value;
+        return OScDev_OK;
+    }
+
+public:
+    static inline OScDev_SettingImpl impl = {
+        .GetBool = Get,
+        .SetBool = Set,
+    };
+};
+
 OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **settings) {
     OScDev_RichError *err = OScDev_RichError_OK;
     *settings = OScDev_PtrArray_Create();
@@ -200,9 +217,9 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **se
 
     err = OScDev_Error_AsRichError(OScDev_Setting_Create(
         &s,
-        "Pixel Marker Channel",
+        "Line Clock Channel",
         OScDev_ValueType_Int32,
-        &ChannelSetting<&TimeTagger_PrivateData::pixelMarkerChannel>::impl,
+        &ChannelSetting<&TimeTagger_PrivateData::lineClockChannel>::impl,
         device
     ));
     if (err) {
@@ -293,6 +310,19 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **se
         goto error;
     }
     OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
+        &s,
+        "Save Raw Data",
+        OScDev_ValueType_Bool,
+        &SaveRawDataSetting::impl,
+        device
+    ));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
 
     return OScDev_OK;
 error:

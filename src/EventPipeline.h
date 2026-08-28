@@ -19,6 +19,10 @@ struct pixel_stop_event {
     tcspc::i64 abstime;
 };
 
+struct pixel_tick_event {
+    tcspc::i64 abstime;
+};
+
 // // Workaround for https://github.com/llvm/llvm-project/issues/54668 (probably
 // // fixed in LLVM 18):
 // // NOLINTNEXTLINE(bugprone-exception-escape)
@@ -43,11 +47,8 @@ struct pixel_stop_event {
 
 class EventPipeline : public IteratorBase {
 public:
-    EventPipeline(TimeTagger_PrivateData *data, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx);
+    EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx);
     ~EventPipeline();
-    int32_t pixelMarker;
-    int32_t lineMarker;
-    int32_t detectorMarker;
 protected:
 
     bool next_impl(std::vector<Tag> &incoming_tags, timestamp_t begin_time, timestamp_t end_time) override;
@@ -56,8 +57,12 @@ protected:
     void on_stop() override;
 
 private:
-    TimeTagger_PrivateData *tagger;
+    OScDev_Device *device_;
     tcspc::type_erased_processor<tcspc::type_list<tcspc::swabian_tag_event>> pipeline_;
+    tcspc::buffer_accessor accessor_;
+    std::thread consumer_thread_;
+
+    void PumpConsumerLoop();
 };
 
 auto make_processor(TimeTagger_PrivateData *data, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx);

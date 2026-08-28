@@ -1,5 +1,6 @@
 #pragma once
 
+#include <measurements/Dump.h>
 #include <memory>
 #include <string>
 #include <TimeTagger.h>
@@ -10,11 +11,11 @@ public:
     std::string serial;
     TimeTaggerBase *tagger = nullptr;
     std::unique_ptr<IteratorBase> pipeline = nullptr;
+    std::unique_ptr<Dump> dumpPipeline = nullptr;
 
-    int32_t syncChannel = 1;
-    int32_t photonChannel = 2;
-    int32_t pixelMarkerChannel = 3;
-    // int32_t lineChannel = 3; // Line START channel, really
+    int32_t lineClockChannel = 1;
+    int32_t syncChannel = 2;
+    int32_t photonChannel = 3;
 
     int32_t syncDelay = 0; // picoseconds
     int32_t maxPhotonPulseWidth = 100'000; // picoseconds
@@ -25,7 +26,7 @@ public:
     int32_t maxBinIndex = 255;
 
     bool saveFiles = false;
-
+    bool saveRawData = false;
 };
 
 static inline class TimeTagger_PrivateData *GetData(OScDev_Device *device) {
