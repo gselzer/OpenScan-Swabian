@@ -115,18 +115,19 @@ constexpr timestamp_t kMaxSimulatedStepPs = 10'000'000; // 10 ms
 constexpr channel_t kSimulatedLineClockChannel = 1;
 // Sized to match the pipeline's currently-configured default ROI (512x512)
 // at kSimulatedPixelPeriodPs (see below): 512 pixels/line *
-// kSimulatedPixelPeriodPs = 2.048 ms/line, so pixel_marker_processor's
+// kSimulatedPixelPeriodPs = 0.512 ms/line, so pixel_marker_processor's
 // width+1 generated pixel ticks exactly fill one simulated line period,
 // with no dead time where sync/photon keep firing but there's no active
 // pixel window to bin them into (this fake can't read the acquisition's
 // actual pixel rate or ROI width -- see the file comment above -- so this
 // is necessarily a fixed assumption, not derived; if the configured ROI
-// width changes, this should be recomputed to match: width *
-// kSimulatedPixelPeriodPs). This fake's generation rate isn't
-// accelerated -- it runs at whatever rate these constants specify, in
-// real time, so 512 lines (one frame) takes ~1.05 s of both simulated AND
-// wall-clock time.
-constexpr timestamp_t kSimulatedLinePeriodPs = 2'048'000'000; // ~488 Hz (512 px/line * kSimulatedPixelPeriodPs)
+// width OR kSimulatedPixelPeriodPs changes, this should be recomputed to
+// match: width * kSimulatedPixelPeriodPs). This fake's generation rate
+// isn't accelerated -- it runs at whatever rate these constants specify,
+// in real time, so 512 lines (one frame) takes ~0.26 s of both simulated
+// AND wall-clock time (assuming the pipeline can actually keep up -- see
+// kSimulatedPixelPeriodPs's own comment on that).
+constexpr timestamp_t kSimulatedLinePeriodPs = 512'000'000; // ~1.95 kHz (512 px/line * kSimulatedPixelPeriodPs)
 
 // Fake-only: same exception as kSimulatedLineClockChannel above, extended
 // to a simulated laser-sync + photon pair so the sync/photon time
@@ -154,12 +155,22 @@ constexpr channel_t kSimulatedPhotonChannel = 3;
 // kSimulatedLinePeriodPs's comment above. At 10 MHz, sync alone (2 tags/
 // period) is ~20M tags/sec, and gated photon noise (~1 detection/period,
 // 2 tags) adds roughly another ~20M tags/sec -- both far beyond what this
-// pipeline can sustain (~800K tags/sec, measured from a real next_impl()
-// call before the tag-buffer/consumer-thread split). At the 25 kHz used
-// here, aggregate throughput is instead ~50K (sync) + ~50K (photon) =
-// ~100K tags/sec, comfortably under that ceiling with margin. Revisit
-// once the pipeline is confirmed to keep up at higher rates.
-constexpr timestamp_t kSimulatedPixelPeriodPs = 4'000'000;   // 4 us (25 kHz) between sync pulses
+// pipeline can sustain. At the 1 MHz used here, aggregate throughput is
+// instead ~2M (sync) + ~2M (photon) = ~4M tags/sec.
+//
+// UNVERIFIED at this rate: the last actual throughput measurement (~800K
+// tags/sec, from a real next_impl() call) predates the tag-buffer/
+// consumer-thread split, the batch/unbatch optimization around it, AND
+// the full-histogram/live-intensity broadcast split (which roughly
+// doubles per-tag consumer work, since every tag now flows through two
+// histogram branches instead of one) -- so it's unknown whether 4M
+// tags/sec is actually sustainable now. If PumpLoop's batches start
+// growing without bound (the same runaway pattern chased down earlier in
+// this project's history), that's this rate exceeding whatever the
+// current real ceiling is; kMaxSimulatedStepPs (unused -- see its own
+// comment) and/or the synthetic-overflow-tags TODO in EventPipeline.cpp
+// are the real fixes, not further lowering this constant.
+constexpr timestamp_t kSimulatedPixelPeriodPs = 1'000'000;   // 1 us (1 MHz) between sync pulses
 constexpr timestamp_t kSimulatedSyncPulseWidth = 1'000;       // ps, sync rising -> falling
 constexpr timestamp_t kSimulatedPhotonPulseWidth = 2'000;     // ps, photon rising -> falling
 constexpr timestamp_t kSimulatedPhotonGateWidthPs = 10'000;   // ps after each sync tick where photon noise can occur
