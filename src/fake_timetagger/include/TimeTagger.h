@@ -26,43 +26,28 @@
 //
 // Most methods here are inert stubs (store-and-return-what-was-set, or a
 // fixed plausible default) -- there is no real hardware or clock
-// underneath them. Synthetic event generation is implemented here (for
-// IteratorBase, via a background thread -- see IteratorBase::PumpLoop)
-// and separately in measurements/TimeTagStream.h and
-// measurements/SignalGenerators.h (a pull-based equivalent, predating
-// IteratorBase support here). Both generate events for ANY channel at the
-// same fixed rate, kDefaultChannelRateHz below -- there is deliberately no
-// API anywhere on this fake (TimeTaggerBase or otherwise) for configuring
-// a channel's simulated rate, since no such API exists on the real
-// TimeTaggerBase either. In particular, this means a device module's own
-// settings (e.g. which channel is the sync/pixel-marker/photon input) are
-// free to pick any channel number -- in simulate mode, whichever channels
-// end up configured will simply start producing generic synthetic events
-// at kDefaultChannelRateHz; there is no per-role or per-channel modeling.
+// underneath them. Synthetic event generation is implemented here, for
+// IteratorBase, via a background thread -- see IteratorBase::PumpLoop.
+// There is deliberately no API anywhere on this fake (TimeTaggerBase or
+// otherwise) for configuring a channel's simulated rate or pattern, since
+// no such API exists on the real TimeTaggerBase either. In particular,
+// this means a device module's own settings (e.g. which channel is the
+// sync/pixel-marker/photon input) are free to pick any channel number --
+// in simulate mode, any channel other than the three hardcoded ones below
+// will simply produce generic Poisson noise at kDefaultChannelRateHz.
 //
-// One exception, and it's not really an exception: a channel can be made
-// to follow a deterministic pattern instead, but only by constructing an
-// explicit signal-generator object for it (see ChannelPatternRegistry
-// below and measurements/SignalGenerators.h's PatternSignalGenerator) --
-// real, documented API surface on the real SDK too. There is still no
-// TimeTaggerBase (or any other) method that takes a channel number and a
-// rate/pattern directly.
-//
-// A second, genuine exception: kSimulatedLineClockChannel below. Unlike
-// PatternSignalGenerator, this one really does break the "no per-channel
-// modeling" rule -- it is a hardcoded channel number, baked into this fake
-// with no way for device-module code to configure or discover it via any
-// API call. It exists because a scanner's line clock, on real hardware,
-// requires no Time Tagger API call at all to appear on an input channel --
-// it's just physically wired in. A device module written against this API
+// The three exceptions -- kSimulatedLineClockChannel, kSimulatedSyncChannel
+// and kSimulatedPhotonChannel below -- are hardcoded channel numbers, baked
+// into this fake with no way for device-module code to configure or
+// discover them via any API call. They exist because a scanner's line
+// clock and a detector's sync/photon lines, on real hardware, require no
+// Time Tagger API call at all to appear on an input channel -- they're
+// just physically wired in. A device module written against this API
 // therefore has no call available to make an equivalent signal appear in
-// simulate mode either (constructing a PatternSignalGenerator targeting an
-// already-externally-wired input channel would be meaningless, or actively
-// wrong, on real hardware, so it can't be something module code calls
-// unconditionally). This fake instead pretends its one simulated device
-// always has a scanner's line clock wired into this one fixed channel,
-// exactly as if that were part of the simulated hardware's fixed identity
-// (compare kFakeSerial/kFakeModel below).
+// simulate mode either. This fake instead pretends its one simulated
+// device always has exactly this fixed identity, exactly as if that were
+// part of the simulated hardware itself (compare kFakeSerial/kFakeModel
+// below).
 
 #include <algorithm>
 #include <atomic>
@@ -85,33 +70,30 @@
 
 constexpr channel_t CHANNEL_UNUSED = 0xf8000000;
 
-// Fake-only: the synthetic arrival rate (Hz) used for every channel, in
-// both IteratorBase::PumpLoop and measurements/TimeTagStream.h. Not
-// configurable anywhere, on purpose -- see the file comment above.
+// Fake-only: the synthetic arrival rate (Hz) used for any registered
+// channel other than the three hardcoded ones below. Not configurable
+// anywhere, on purpose -- see the file comment above.
 constexpr double kDefaultChannelRateHz = 100'000.0;
 
-// Fake-only, currently UNUSED (not wired into PumpLoop or
-// TimeTagStream::getData() -- see EventPipeline.cpp's TODO next to its
-// stop_with_error for lost-interval events). The idea: if a single
-// PumpLoop iteration (or getData() call) ever needed to advance by more
-// simulated time than this, that's the fake's analog of a real device's
-// circular FIFO overflowing because software fell behind -- the plan is
-// to emit synthetic OverflowBegin/OverflowEnd/MissedEvents tags for the
-// excess span (matching real hardware) rather than either silently
-// retaining every tag no matter how large the backlog gets, or silently
-// dropping/delaying data with no signal to software at all.
+// Fake-only, currently UNUSED (not wired into PumpLoop -- see
+// EventPipeline.cpp's TODO next to its stop_with_error for lost-interval
+// events). The idea: if a single PumpLoop iteration ever needed to advance
+// by more simulated time than this, that's the fake's analog of a real
+// device's circular FIFO overflowing because software fell behind -- the
+// plan is to emit synthetic OverflowBegin/OverflowEnd/MissedEvents tags
+// for the excess span (matching real hardware) rather than either
+// silently retaining every tag no matter how large the backlog gets, or
+// silently dropping/delaying data with no signal to software at all.
 constexpr timestamp_t kMaxSimulatedStepPs = 10'000'000; // 10 ms
 
-// Fake-only: see the file comment's second exception, above. This one
-// fixed channel always carries a periodic signal (unless a
-// PatternSignalGenerator has been explicitly constructed for it, which
-// still takes priority -- see PumpLoop and TimeTagStream::TimeTagStream()
-// below), standing in for a scanner's line clock. The period (~250 kHz)
-// matches a real Time Tagger line-clock capture this project's device
-// module was validated against; it is a fixed fake-hardware constant, not
-// derived from any acquisition's pixel rate or ROI width -- this fake has
-// no access to those OpenScan-specific concepts, and no API call is needed
-// from module code to make this channel periodic in the first place.
+// Fake-only: see the file comment above. This one fixed channel always
+// carries a periodic signal, standing in for a scanner's line clock. The
+// period (~250 kHz) matches a real Time Tagger line-clock capture this
+// project's device module was validated against; it is a fixed
+// fake-hardware constant, not derived from any acquisition's pixel rate
+// or ROI width -- this fake has no access to those OpenScan-specific
+// concepts, and no API call is needed from module code to make this
+// channel periodic in the first place.
 constexpr channel_t kSimulatedLineClockChannel = 1;
 // Sized to match the pipeline's currently-configured default ROI (512x512)
 // at kSimulatedPixelPeriodPs (see below): 512 pixels/line *
@@ -137,18 +119,16 @@ constexpr timestamp_t kSimulatedLinePeriodPs = 512'000'000; // ~1.95 kHz (512 px
 // syncChannel/photonChannel settings:
 //
 //  - kSimulatedSyncChannel (and its negative) get a periodic +/- pulse
-//    pair, one per kSimulatedPixelPeriodPs, via the same
-//    ChannelPatternRegistry::Pattern mechanism as the line clock.
+//    pair, one per kSimulatedPixelPeriodPs, hardcoded directly in
+//    PumpLoop the same way as the line clock.
 //  - kSimulatedPhotonChannel (and its negative) get Poisson-arrival +/-
 //    pulse pairs, but *gated*: arrivals are only generated within
 //    kSimulatedPhotonGateWidthPs after each sync period's start, then
-//    silent until the next period. This can't be expressed as a
-//    ChannelPatternRegistry::Pattern (that's a fixed deterministic
-//    sequence, not a bounded random process), so PumpLoop and
-//    TimeTagStream::getData() special-case it directly, generating both
-//    polarities together from one shared draw sequence (not
-//    independently per channel) so the rising/falling tags stay paired
-//    for pair_one_between's pulse-width matching downstream.
+//    silent until the next period -- a bounded random process, unlike the
+//    other two's fixed periodic pulses, so PumpLoop special-cases it
+//    directly, generating both polarities together from one shared draw
+//    sequence (not independently per channel) so the rising/falling tags
+//    stay paired for pair_one_between's pulse-width matching downstream.
 constexpr channel_t kSimulatedSyncChannel = 2;
 constexpr channel_t kSimulatedPhotonChannel = 3;
 // Temporarily scaled down from a realistic ~10 MHz sync rate -- see
@@ -175,54 +155,6 @@ constexpr timestamp_t kSimulatedSyncPulseWidth = 1'000;       // ps, sync rising
 constexpr timestamp_t kSimulatedPhotonPulseWidth = 2'000;     // ps, photon rising -> falling
 constexpr timestamp_t kSimulatedPhotonGateWidthPs = 10'000;   // ps after each sync tick where photon noise can occur
 constexpr double kSimulatedPhotonGateRateHz = 1e8;            // Poisson rate while the gate is open (~1 photon/gate; independent of the period above -- see mean = rate * gate_width)
-
-// Fake-only: lets a signal generator (e.g. PatternSignalGenerator, in
-// measurements/SignalGenerators.h) override the default Poisson synthesis
-// for one channel with a deterministic timestamp pattern, for as long as
-// the generator object is alive. Consulted independently by every
-// IteratorBase::PumpLoop and TimeTagStream instance -- each such consumer
-// walks its own copy of the pattern from its own local start, so this
-// does NOT give multiple simultaneous listeners on the same channel an
-// identical tag sequence (same caveat as the rest of this file's
-// synthetic generation; see the multi-iterator note near IteratorBase).
-// The only way to populate this is by constructing a signal-generator
-// object -- there is still no direct "set this channel's pattern" method
-// on TimeTaggerBase or anything else.
-class ChannelPatternRegistry {
-  public:
-    struct Pattern {
-        std::vector<timestamp_t> sequence; // offsets within one cycle, ps
-        bool repeat = false;
-        timestamp_t start_delay = 0; // ps before the first cycle
-        timestamp_t spacing = 0;     // ps between the start of each cycle
-    };
-
-    static void Register(channel_t channel, Pattern pattern) {
-        std::lock_guard<std::mutex> lock(GetMutex());
-        GetMap()[channel] = std::move(pattern);
-    }
-    static void Unregister(channel_t channel) {
-        std::lock_guard<std::mutex> lock(GetMutex());
-        GetMap().erase(channel);
-    }
-    [[nodiscard]] static std::optional<Pattern> Find(channel_t channel) {
-        std::lock_guard<std::mutex> lock(GetMutex());
-        auto const it = GetMap().find(channel);
-        if (it == GetMap().end())
-            return std::nullopt;
-        return it->second;
-    }
-
-  private:
-    static std::mutex &GetMutex() {
-        static std::mutex m;
-        return m;
-    }
-    static std::map<channel_t, Pattern> &GetMap() {
-        static std::map<channel_t, Pattern> m;
-        return m;
-    }
-};
 
 class IteratorBase; // Full definition below, after TimeTaggerBase; only
                      // used by pointer/reference up to that point.
@@ -441,10 +373,10 @@ inline bool operator==(Tag const &a, Tag const &b) {
 }
 
 // Fake of IteratorBase. Drives a background thread that synthesizes
-// Poisson-arrival events at the fixed kDefaultChannelRateHz -- same
-// technique as measurements/TimeTagStream.h, just restructured as a push
-// instead of a pull -- for whatever channels the subclass registers, and
-// delivers them via next_impl(). This is enough to
+// events (Poisson-arrival at the fixed kDefaultChannelRateHz, or the
+// hardcoded line-clock/sync/gated-photon behavior for the three special
+// channels -- see the file comment above) for whatever channels the
+// subclass registers, and delivers them via next_impl(). This is enough to
 // exercise a real next_impl()-based acquisition design under simulate=true
 // without hardware; it does not model getCaptureDuration(), getConfiguration(),
 // virtual-channel allocation, or startFor()'s auto-stop-after-duration
@@ -588,7 +520,6 @@ class IteratorBase {
         auto last = std::chrono::steady_clock::now();
         std::mt19937_64 rng{std::random_device{}()};
         std::map<channel_t, double> next_arrival_ps;
-        std::map<channel_t, std::size_t> next_pattern_index;
         std::optional<double> next_photon_candidate_ps;
 
         while (running_) {
@@ -630,6 +561,16 @@ class IteratorBase {
                 if (!next_photon_candidate_ps)
                     next_photon_candidate_ps = gate_dist(rng) * 1e12;
                 for (;;) {
+                    // A stop request (running_ flipped false by the
+                    // consumer thread reaching its frame count, or by
+                    // next_impl() itself) can land mid-generation, since
+                    // this loop is the single most expensive part of a
+                    // PumpLoop iteration and running_ is otherwise only
+                    // checked once per iteration. Bail out immediately
+                    // rather than generating a backlog's worth of tags
+                    // nobody will ever consume.
+                    if (!running_)
+                        break;
                     double &t = *next_photon_candidate_ps;
                     if (t >= elapsed_ps)
                         break;
@@ -641,14 +582,10 @@ class IteratorBase {
                     double const offset_in_period = t - period_start;
                     if (offset_in_period <
                         static_cast<double>(kSimulatedPhotonGateWidthPs)) {
-                        if (photon_pos_registered &&
-                            !ChannelPatternRegistry::Find(
-                                kSimulatedPhotonChannel))
+                        if (photon_pos_registered)
                             batch.emplace_back(static_cast<timestamp_t>(t),
                                                 kSimulatedPhotonChannel);
-                        if (photon_neg_registered &&
-                            !ChannelPatternRegistry::Find(
-                                -kSimulatedPhotonChannel))
+                        if (photon_neg_registered)
                             batch.emplace_back(
                                 static_cast<timestamp_t>(
                                     t + kSimulatedPhotonPulseWidth),
@@ -675,73 +612,47 @@ class IteratorBase {
             }
 
             for (channel_t const channel : registered_channels_) {
+                // See the same check in the gated-photon loop above.
+                if (!running_)
+                    break;
                 if (channel == kSimulatedPhotonChannel ||
-                    channel == -kSimulatedPhotonChannel) {
-                    // Handled above, as a correlated rising/falling pair,
-                    // unless something explicitly registered a pattern for
-                    // this exact polarity.
-                    if (!ChannelPatternRegistry::Find(channel))
-                        continue;
-                }
+                    channel == -kSimulatedPhotonChannel)
+                    continue; // handled above, as a correlated gated pair
 
-                std::optional<ChannelPatternRegistry::Pattern> pattern =
-                    ChannelPatternRegistry::Find(channel);
-                if (!pattern && channel == kSimulatedLineClockChannel) {
-                    // Hardcoded simulated line clock (see the constant's
-                    // own comment above) -- only when nothing has
-                    // explicitly registered a pattern for this channel, so
-                    // an explicit PatternSignalGenerator still wins.
-                    pattern = ChannelPatternRegistry::Pattern{
-                        {0}, true, 0, kSimulatedLinePeriodPs};
-                }
-                if (!pattern && channel == kSimulatedSyncChannel) {
-                    pattern = ChannelPatternRegistry::Pattern{
-                        {0}, true, 0, kSimulatedPixelPeriodPs};
-                }
-                if (!pattern && channel == -kSimulatedSyncChannel) {
-                    pattern = ChannelPatternRegistry::Pattern{
-                        {kSimulatedSyncPulseWidth}, true, 0,
-                        kSimulatedPixelPeriodPs};
-                }
-                if (pattern) {
-                    // Deterministic pattern (from PatternSignalGenerator, or
-                    // the hardcoded simulated line clock above) instead of
-                    // generic Poisson noise. Absolute time of the n-th
-                    // sequence entry is start_delay + cycle*spacing +
-                    // sequence[offset_index].
-                    if (pattern->sequence.empty())
-                        continue;
-                    std::size_t const cycle_len = pattern->sequence.size();
-                    std::size_t &next_index = next_pattern_index[channel];
-                    for (;;) {
-                        std::size_t const cycle = next_index / cycle_len;
-                        if (!pattern->repeat && cycle > 0)
-                            break; // one-shot pattern already fully emitted
-                        std::size_t const offset_index = next_index % cycle_len;
-                        double const t =
-                            static_cast<double>(pattern->start_delay) +
-                            static_cast<double>(cycle) *
-                                static_cast<double>(pattern->spacing) +
-                            static_cast<double>(pattern->sequence[offset_index]);
-                        if (t >= elapsed_ps)
-                            break;
-                        batch.emplace_back(static_cast<timestamp_t>(t), channel);
-                        ++next_index;
-                    }
-                    continue;
+                // Hardcoded simulated line-clock/sync signals (see the
+                // constants' own comments above); every other registered
+                // channel gets generic Poisson noise at
+                // kDefaultChannelRateHz instead (see the file comment for
+                // why there's no way to configure a channel's simulated
+                // rate/pattern beyond this fixed set).
+                bool deterministic = true;
+                timestamp_t period = 0;
+                timestamp_t phase_offset = 0;
+                if (channel == kSimulatedLineClockChannel) {
+                    period = kSimulatedLinePeriodPs;
+                } else if (channel == kSimulatedSyncChannel) {
+                    period = kSimulatedPixelPeriodPs;
+                } else if (channel == -kSimulatedSyncChannel) {
+                    period = kSimulatedPixelPeriodPs;
+                    phase_offset = kSimulatedSyncPulseWidth;
+                } else {
+                    deterministic = false;
                 }
 
                 std::exponential_distribution<double> interval_dist(
                     kDefaultChannelRateHz);
                 auto it = next_arrival_ps.find(channel);
-                if (it == next_arrival_ps.end())
-                    it = next_arrival_ps
-                             .emplace(channel, interval_dist(rng) * 1e12)
-                             .first;
-                while (it->second < elapsed_ps) {
+                if (it == next_arrival_ps.end()) {
+                    double const start = deterministic
+                                              ? static_cast<double>(phase_offset)
+                                              : interval_dist(rng) * 1e12;
+                    it = next_arrival_ps.emplace(channel, start).first;
+                }
+                while (running_ && it->second < elapsed_ps) {
                     batch.emplace_back(static_cast<timestamp_t>(it->second),
                                         channel);
-                    it->second += interval_dist(rng) * 1e12;
+                    it->second += deterministic ? static_cast<double>(period)
+                                                 : interval_dist(rng) * 1e12;
                 }
             }
             std::sort(batch.begin(), batch.end(),

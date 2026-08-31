@@ -173,6 +173,19 @@ static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acq) {
 
     auto ctx = tcspc::context::create();
 
+    // Tear down any still-running pipeline from a previous Arm() BEFORE
+    // constructing the new one. `pipeline = std::make_unique<...>(...)`
+    // would construct (and start the threads of) the new EventPipeline
+    // first, only destroying -- and thus stopping -- the old one as part
+    // of the assignment; that leaves two pipelines registered on the same
+    // channels and running concurrently for as long as the old one takes
+    // to drain and join, each competing with the other for CPU. Resetting
+    // first ensures only one pipeline is ever alive at a time.
+    auto& pipeline = GetData(device)->pipeline;
+    if (pipeline) {
+        pipeline.reset();
+    }
+
     try {
         GetData(device)->pipeline = std::make_unique<EventPipeline>(device, acq, ctx);
     } catch (const std::runtime_error &e) {

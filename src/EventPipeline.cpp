@@ -26,10 +26,32 @@ public:
         : acq_(acq), channel_(channel), num_frames_(num_frames) {}
 
     void handle(tcspc::histogram_array_event<> const &event) {
+        handle_bucket(event.data_bucket);
+    }
+    // Cumulative mode's scan_histograms<emit_concluding_events> emits a
+    // concluding_histogram_array_event instead of histogram_array_event
+    // (a distinct, unrelated type, despite carrying the same data_bucket
+    // shape) -- this sink needs to be a valid handler for both, since
+    // make_processor<true> selects only the former as this sink's input.
+    void handle(tcspc::concluding_histogram_array_event<> const &event) {
+        handle_bucket(event.data_bucket);
+    }
+    void flush() {}
+
+    [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
+        return tcspc::processor_info(this, "CallFrameCallbackSink");
+    }
+
+    [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
+        return tcspc::processor_graph().push_entry_point(this);
+    }
+
+private:
+    template <typename Bucket> void handle_bucket(Bucket const &data_bucket) {
         OScDev_Acquisition_CallFrameCallback(
             acq_,
             channel_,
-            const_cast<void *>(static_cast<void const *>(event.data_bucket.data())));
+            const_cast<void *>(static_cast<void const *>(data_bucket.data())));
         // Same idea as BH's LineClockPixellator calling downstream->
         // HandleFinish() once currentLine / linesPerFrame == maxFrames --
         // stop once the requested number of frames has been delivered, via
@@ -41,15 +63,6 @@ public:
         if (++frames_delivered_ == num_frames_)
             throw tcspc::end_of_processing(
                 "acquisition complete: reached requested frame count");
-    }
-    void flush() {}
-
-    [[nodiscard]] auto introspect_node() const -> tcspc::processor_info {
-        return tcspc::processor_info(this, "CallFrameCallbackSink");
-    }
-
-    [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
-        return tcspc::processor_graph().push_entry_point(this);
     }
 };
 
@@ -63,13 +76,16 @@ public:
 class HistogramDumpSink {
 public:
     void handle(tcspc::histogram_array_event<> const &event) {
-        std::ofstream debug_file(
-            "C:\\Users\\gjselzer\\code\\openscan-lsm\\OpenScan-Swabian\\histogram_debug.bin",
-            std::ios::binary | std::ios::trunc);
-        debug_file.write(
-            reinterpret_cast<char const *>(event.data_bucket.data()),
-            static_cast<std::streamsize>(event.data_bucket.size() *
-                                          sizeof(tcspc::u16)));
+        dump_bucket(event.data_bucket);
+    }
+    // Cumulative mode's scan_histograms<emit_concluding_events> emits a
+    // concluding_histogram_array_event instead of histogram_array_event
+    // (a distinct, unrelated type, despite carrying the same data_bucket
+    // shape) -- this sink needs to be a valid handler for both, since
+    // make_full_histo_proc<true> selects only the former as this sink's
+    // input.
+    void handle(tcspc::concluding_histogram_array_event<> const &event) {
+        dump_bucket(event.data_bucket);
     }
     void flush() {}
 
@@ -79,6 +95,17 @@ public:
 
     [[nodiscard]] auto introspect_graph() const -> tcspc::processor_graph {
         return tcspc::processor_graph().push_entry_point(this);
+    }
+
+private:
+    template <typename Bucket> void dump_bucket(Bucket const &data_bucket) {
+        std::ofstream debug_file(
+            "C:\\Users\\gjselzer\\code\\openscan-lsm\\OpenScan-Swabian\\histogram_debug.bin",
+            std::ios::binary | std::ios::trunc);
+        debug_file.write(
+            reinterpret_cast<char const *>(data_bucket.data()),
+            static_cast<std::streamsize>(data_bucket.size() *
+                                          sizeof(tcspc::u16)));
     }
 };
 
@@ -186,7 +213,12 @@ auto make_live_histo_proc(
                 count<histogram_array_event<>>(
                     ctx->tracker<count_accessor>("frame_counter"),
                     select<type_list<concluding_histogram_array_event<>>>(
-                        CallFrameCallbackSink(acq, 0)))));
+                        // emit_concluding_events fires exactly one
+                        // concluding histogram_array_event, at flush --
+                        // the entire acquisition accumulates into that
+                        // single cumulative image, so num_frames=1 is what
+                        // stops the acquisition once it arrives.
+                        CallFrameCallbackSink(acq, 0, 1)))));
     } else {
         // Stop once the requested number of frames has been delivered --
         // same idea as BH's LineClockPixellator, which calls
@@ -456,9 +488,19 @@ auto make_processor(
     // clang-format on
 };
 
+namespace {
+tcspc::type_erased_processor<tcspc::type_list<tcspc::swabian_tag_event>>
+make_pipeline(TimeTagger_PrivateData *data, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx) {
+    using pipeline_type = tcspc::type_erased_processor<tcspc::type_list<tcspc::swabian_tag_event>>;
+    if (data->cumulative)
+        return pipeline_type(make_processor<true>(data, acq, ctx));
+    return pipeline_type(make_processor<false>(data, acq, ctx));
+}
+} // namespace
+
 EventPipeline::EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx) : IteratorBase(GetData(device)->tagger),
     device_(device),
-    pipeline_(make_processor<false>(GetData(device), acq, ctx)),
+    pipeline_(make_pipeline(GetData(device), acq, ctx)),
     accessor_(ctx->access<tcspc::buffer_accessor>("tag_buffer"))
 {
     registerChannel(GetData(device)->syncChannel);
@@ -525,6 +567,18 @@ void EventPipeline::on_stop() {
         // stop()) since next_impl() already runs under IteratorBase's own
         // lock.
         OScDev_Log_Info(device_, ("EventPipeline: acquisition complete: " + std::string(e.what())).c_str());
+        finish_running();
+    } catch (std::exception const &e) {
+        // Any other exception (e.g. stop_with_error's std::runtime_error,
+        // which flush() can trigger same as handle()) is a genuine error
+        // in the data. Must still be caught here, same as in next_impl()
+        // and PumpConsumerLoop(): letting it escape would skip
+        // accessor_.halt()/consumer_thread_.join() below (leaking a
+        // joinable thread -- std::terminate() the next time it's
+        // destroyed) and propagate a C++ exception across the C ABI into
+        // OpenScanLib, which on_stop()'s caller (IteratorBase::stop(),
+        // called from ~EventPipeline() or Stop()) is not prepared for.
+        OScDev_Log_Error(device_, ("EventPipeline: pipeline error: " + std::string(e.what())).c_str());
         finish_running();
     }
     accessor_.halt();
