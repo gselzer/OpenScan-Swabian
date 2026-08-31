@@ -364,7 +364,7 @@ error:
     for (size_t i = 0; i < OScDev_PtrArray_Size(*settings); ++i) {
         OScDev_Setting_Destroy((OScDev_Setting *)OScDev_PtrArray_At(*settings, i));
     }
-    free(*settings);
+    OScDev_PtrArray_Destroy(*settings);
     *settings = NULL;
     return OScDev_Error_ReturnAsCode(
         OScDev_Error_Wrap(err, "Failed to create settings"));
