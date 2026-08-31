@@ -381,15 +381,12 @@ auto make_processor(
     std::move(cfd_merge))))));
 
 
-    // TODO Make this a setting
-    std::int64_t line_delay = 0; // offset of pixel 0's start from the line-clock marker
-
     double pixelRate = OScDev_Acquisition_GetPixelRate(acq);
     auto pixel_marker_processor =
     // Convert line clock detection events into (width + 1) pixel tick events
     generate<detection_event<>, pixel_tick_event>(
         linear_timing_generator(
-            arg::delay{line_delay},
+            arg::delay{std::int64_t(data->lineDelay)},
             arg::interval{std::int64_t(1e12 / pixelRate)},
             arg::count{std::size_t(width) + 1}
         ),

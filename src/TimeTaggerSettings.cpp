@@ -57,6 +57,35 @@ public:
     };
 };
 
+class LineDelaySetting {
+    static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
+        *value = GetSettingDeviceData(setting)->lineDelay;
+        return OScDev_OK;
+    }
+    static OScDev_Error Set(OScDev_Setting *setting, int32_t value) {
+        GetSettingDeviceData(setting)->lineDelay = value;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetNumericConstraintType(OScDev_Setting *, OScDev_ValueConstraint *constraintType) {
+        *constraintType = OScDev_ValueConstraint_Range;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min, int32_t *max) {
+        // Line delay should be non-negative integers
+        *min = 0;
+        *max = std::numeric_limits<int32_t>::max();
+        return OScDev_OK;
+    }
+
+public:
+    static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
+        .GetInt32 = Get,
+        .SetInt32 = Set,
+        .GetInt32Range = GetRange,
+    };
+};
+
 class MaxPhotonPulseWidthSetting {
     static OScDev_Error Get(OScDev_Setting *setting, int32_t *value) {
         *value = GetSettingDeviceData(setting)->maxPhotonPulseWidth;
@@ -267,6 +296,18 @@ OScDev_Error TimeTagger_MakeSettings(OScDev_Device *device, OScDev_PtrArray **se
         "Sync Delay",
         OScDev_ValueType_Int32,
         &SyncDelaySetting::impl,
+        device
+    ));
+    if (err) {
+        goto error;
+    }
+    OScDev_PtrArray_Append(*settings, s);
+
+    err = OScDev_Error_AsRichError(OScDev_Setting_Create(
+        &s,
+        "Line Delay",
+        OScDev_ValueType_Int32,
+        &LineDelaySetting::impl,
         device
     ));
     if (err) {
