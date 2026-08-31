@@ -174,10 +174,6 @@ static OScDev_Error Arm(OScDev_Device *device, OScDev_Acquisition *acq) {
     auto ctx = tcspc::context::create();
 
     try {
-        // Raw-tag dumping (the "Save Raw Data" setting) is handled inside
-        // EventPipeline itself now -- see RawTagDumpSink's comment in
-        // EventPipeline.cpp for why it's a broadcast branch of the live
-        // pipeline rather than a second, independent measurement.
         GetData(device)->pipeline = std::make_unique<EventPipeline>(device, acq, ctx);
     } catch (const std::runtime_error &e) {
         return OScDev_Error_ReturnAsCode(OScDev_Error_Create(e.what()));
