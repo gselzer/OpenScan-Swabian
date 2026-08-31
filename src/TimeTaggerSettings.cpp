@@ -94,11 +94,25 @@ class MaxDiffTimeSetting {
         GetSettingDeviceData(setting)->maxDiffTime = value;
         return OScDev_OK;
     }
+    static OScDev_Error GetNumericConstraintType(OScDev_Setting *, OScDev_ValueConstraint *constraintType) {
+        *constraintType = OScDev_ValueConstraint_Range;
+        return OScDev_OK;
+    }
+    static OScDev_Error GetRange(OScDev_Setting *, int32_t *min, int32_t *max) {
+        // Must be positive: it's used as a histogram bin_width divisor and
+        // as a pair_all_between time_window in EventPipeline.cpp, both of
+        // which are nonsensical (or crash-prone) at zero or negative.
+        *min = 1;
+        *max = std::numeric_limits<int32_t>::max();
+        return OScDev_OK;
+    }
 
 public:
     static inline OScDev_SettingImpl impl = {
+        .GetNumericConstraintType = GetNumericConstraintType,
         .GetInt32 = Get,
         .SetInt32 = Set,
+        .GetInt32Range = GetRange,
     };
 };
 
