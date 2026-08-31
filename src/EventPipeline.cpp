@@ -265,7 +265,7 @@ auto make_processor(
     // error spread across the whole histogram), which is a far cheaper
     // trade than losing real data.
     std::int32_t const num_bins = data->histogramBins;
-    std::int32_t const bin_width =
+    difftime_type const bin_width =
         (data->maxDiffTime + num_bins - 1) / num_bins;
 
     using tc_event_list = type_list<
@@ -285,9 +285,9 @@ auto make_processor(
         difftime_data_mapper(),
     map_to_bins(
         linear_bin_mapper(
-            arg::offset{0},
-            arg::bin_width{1},
-            arg::max_bin_index{std::uint16_t(0)},
+            arg::offset<difftime_type>{0},
+            arg::bin_width<difftime_type>{1},
+            arg::max_bin_index<bin_index_type>{0},
             arg::clamp{true}),
     cluster_bin_increments<pixel_start_event, pixel_stop_event>(
     count<bin_increment_cluster_event<>>(
@@ -318,14 +318,14 @@ auto make_processor(
             difftime_data_mapper(),
         map_to_bins(
             linear_bin_mapper(
-                arg::offset{0},
+                arg::offset<difftime_type>{0},
                 arg::bin_width{bin_width},
                 // linear_bin_mapper's own parameter is the index of the
                 // last bin (num_bins - 1), not a bin count -- num_bins is
                 // guaranteed >= 16 by HistogramBinsSetting's
                 // discrete-values list (never includes 0), so this can't
                 // underflow.
-                arg::max_bin_index{std::uint16_t(num_bins - 1)}),
+                arg::max_bin_index<bin_index_type>{bin_index_type(num_bins - 1)}),
         cluster_bin_increments<pixel_start_event, pixel_stop_event>(
         count<bin_increment_cluster_event<>>(
             ctx->tracker<count_accessor>("pixel_counter"),
@@ -348,13 +348,13 @@ auto make_processor(
     pair_all_between(
         arg::start_channel{data->syncChannel},
         std::array{data->photonChannel},
-        arg::time_window<i64>{data->maxDiffTime},
+        arg::time_window<abstime_type>{data->maxDiffTime},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     time_correlate_at_stop(
     std::move(tc_merge)))));
 
     auto sync_processor =
-    delay(arg::delta{std::int64_t(data->syncDelay)},
+    delay(arg::delta<abstime_type>{data->syncDelay},
     std::move(sync_merge));
 
     auto photon_processor =
@@ -366,7 +366,7 @@ auto make_processor(
         // photon pulse's rise with its own fall, per "Max Photon Pulse
         // Width"'s meaning.
         std::array{-data->photonChannel},
-        arg::time_window{std::int64_t(data->maxPhotonPulseWidth)},
+        arg::time_window<abstime_type>{data->maxPhotonPulseWidth},
     select<type_list<std::array<detection_event<>, 2>, time_reached_event<>>>(
     // UseStartChannel=true: stamp the emitted pulse event's channel from
     // the start (rising, +photonChannel) side of the pair, not the stop
@@ -377,7 +377,7 @@ auto make_processor(
     time_correlate_at_midpoint<default_numeric_traits, true>(
     remove_time_correlation(
     recover_order<type_list<detection_event<>, time_reached_event<>>>(
-        arg::time_window{std::int64_t(data->maxPhotonPulseWidth)},
+        arg::time_window<abstime_type>{data->maxPhotonPulseWidth},
     std::move(cfd_merge))))));
 
 
@@ -386,8 +386,8 @@ auto make_processor(
     // Convert line clock detection events into (width + 1) pixel tick events
     generate<detection_event<>, pixel_tick_event>(
         linear_timing_generator(
-            arg::delay{std::int64_t(data->lineDelay)},
-            arg::interval{std::int64_t(1e12 / pixelRate)},
+            arg::delay<abstime_type>{data->lineDelay},
+            arg::interval<abstime_type>{abstime_type(1e12 / pixelRate)},
             arg::count{std::size_t(width) + 1}
         ),
     // Convert (width) pixel tick events into (width) "pixel start + pixel stop" intervals
