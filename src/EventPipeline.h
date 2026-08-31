@@ -23,28 +23,6 @@ struct pixel_tick_event {
     tcspc::i64 abstime;
 };
 
-// // Workaround for https://github.com/llvm/llvm-project/issues/54668 (probably
-// // fixed in LLVM 18):
-// // NOLINTNEXTLINE(bugprone-exception-escape)
-// struct settings {
-//     std::string output_filename;
-//     channel_type sync_channel = 3;
-//     channel_type pixel_marker_channel = 2;
-//     channel_type photon_leading_channel = 1;
-//     channel_type photon_trailing_channel = -1;
-//     abstime_type sync_delay = 0;
-//     abstime_type max_photon_pulse_width = 100'000;
-//     difftime_type max_diff_time = 15'000;
-//     abstime_type pixel_time = -1;
-//     std::size_t pixels_per_line = 0;
-//     std::size_t lines_per_frame = 0;
-//     difftime_type bin_width = 50;
-//     bin_index_type max_bin_index = 255;
-//     bool cumulative = false;
-//     bool truncate = false;
-//     bool dump_graph = false;
-// };
-
 class EventPipeline : public IteratorBase {
 public:
     EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std::shared_ptr<tcspc::context> const &ctx);
