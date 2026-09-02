@@ -55,6 +55,34 @@ static OScDev_Error TimeTagger_GetModelName(const char **name) {
 static OScDev_Error TimeTagger_EnumerateInstances(OScDev_PtrArray **devices) {
     std::vector<std::string> serials = scanTimeTagger(false);
 
+    if (serials.empty()) {
+        // scanTimeTagger() found nothing to report -- not necessarily an
+        // error (OpenScanLib calls EnumerateInstances for every installed
+        // module at startup, whether or not this one's hardware is
+        // present), but silently returning zero devices here is
+        // indistinguishable from a real problem, so log *why* nothing
+        // showed up. The two most common causes: no Time Tagger connected,
+        // or the connected one's license doesn't permit use.
+        //
+        // createTimeTagger() often throws with a more specific,
+        // vendor-provided reason than scanTimeTagger() gives us -- try it
+        // purely to capture that detail for the log; we still report zero
+        // devices below either way, matching what scanTimeTagger() found.
+        std::string detail;
+        try {
+            freeTimeTagger(createTimeTagger(""));
+        } catch (std::exception const &e) {
+            detail = e.what();
+        }
+        std::string msg =
+            "No Swabian Time Tagger devices found. This usually means no "
+            "Time Tagger is connected, or the connected Time Tagger's "
+            "license does not permit its use.";
+        if (!detail.empty())
+            msg += " (" + detail + ")";
+        OScDev_Log_Warning(nullptr, msg.c_str());
+    }
+
     *devices = OScDev_PtrArray_Create();
 
     for (const std::string &serial : serials) {
