@@ -14,6 +14,7 @@
 // every other test in this directory.
 #include <TimeTagger.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -26,47 +27,60 @@ using namespace test_support;
 
 namespace {
 
+// The fake Time Tagger's simulated line-clock period is hardcoded to
+// kSimulatedLineWidthPixels (512) * pixel period (see
+// src/fake_timetagger/include/TimeTagger.h's PumpLoop) -- a different ROI
+// here would open pixel windows covering only part of each simulated line,
+// silently dropping the rest of that line's photons as "dead time", so
+// every acquisition in this file uses this fixed resolution.
+constexpr uint32_t kResolution = 512;
+
+// Retains each captured frame. Assumes each is the same size.
 struct FrameCapture {
-    std::vector<std::uint16_t> pixels;
+    std::vector<std::vector<std::uint16_t>> frames;
     uint32_t channel = 0xFFFFFFFF;
-    int callCount = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
 };
 
 bool OnFrame(OSc_Acquisition *, uint32_t channel, void *pixelData,
              void *data) {
     auto *capture = static_cast<FrameCapture *>(data);
-    ++capture->callCount;
     capture->channel = channel;
     auto const *src = static_cast<std::uint16_t const *>(pixelData);
-    std::copy(src, src + capture->pixels.size(), capture->pixels.begin());
+    capture->frames.emplace_back(
+        src, src + static_cast<size_t>(capture->width) * capture->height);
     return true;
 }
 
-// Everything a test needs to inspect or clean up after
-// RunSingleFrameAcquisition(). tmpl/acq are left alive (not destroyed) so
-// callers can do their own post-wait checks (e.g. OSc_Acquisition_Get*) or
-// call OSc_Acquisition_Stop() before tearing them down -- see that
-// function's own comment for why Stop() is sometimes required first.
-struct AcquisitionRun {
+// Everything a test needs to inspect or clean up after RunAcquisition().
+// tmpl/acq are left alive (not destroyed) so callers can do their own
+// post-wait checks (e.g. OSc_Acquisition_Get*) or call
+// OSc_Acquisition_Stop() before tearing them down -- see that function's
+// own comment for why Stop() is sometimes required first. settings/
+// settingCount are also kept around so callers can restore whatever they
+// mutated via additionalSetup (see device_test_support.hpp's Environment
+// comment on why that matters).
+struct AcquisitionSetup {
     OSc_Setting **settings = nullptr;
     size_t settingCount = 0;
     OSc_AcqTemplate *tmpl = nullptr;
     OSc_Acquisition *acq = nullptr;
-    FrameCapture capture;
     uint32_t width = 0;
     uint32_t height = 0;
 };
 
-// Sets up and runs a single-frame, 512x512 @ 1MHz OpenScan acquisition
-// using the Swabian Time Tagger as the detector, and the fake
-// clock/scanner device as the clock/scanner.
+// Sets up and runs a kResolution x kResolution @ 1MHz OpenScan acquisition
+// of numberOfFrames frames, using the Swabian Time Tagger as the detector
+// and the fake clock/scanner device as the clock/scanner.
 //
-// Caller owns cleanup: destroy run.acq and run.tmpl when done (via
+// Caller owns cleanup: destroy the returned acq and tmpl when done (via
 // OSc_Acquisition_Stop() first if the pipeline needs to be flushed).
-AcquisitionRun RunSingleFrameAcquisition(
-    LSMFixture &fx, std::uint16_t fillValue = 0,
+AcquisitionSetup RunAcquisition(
+    LSMFixture &fx, uint32_t numberOfFrames, bool cumulative,
+    OSc_FrameCallback callback, void *data,
     std::function<void(OSc_Setting **, size_t)> const &additionalSetup = {}) {
-    AcquisitionRun run;
+    AcquisitionSetup run;
     CheckOk(OSc_Device_GetSettings(fx.detector, &run.settings,
                                    &run.settingCount),
             "GetSettings");
@@ -85,7 +99,7 @@ AcquisitionRun RunSingleFrameAcquisition(
             "set Line Clock Channel");
     CheckOk(OSc_Setting_SetBoolValue(
                 FindSetting(run.settings, run.settingCount, "Cumulative"),
-                false),
+                cumulative),
             "set Cumulative");
     if (additionalSetup)
         additionalSetup(run.settings, run.settingCount);
@@ -102,22 +116,21 @@ AcquisitionRun RunSingleFrameAcquisition(
     CheckOk(OSc_AcqTemplate_GetResolutionSetting(run.tmpl,
                                                  &resolutionSetting),
             "GetResolutionSetting");
-    CheckOk(OSc_Setting_SetInt32Value(resolutionSetting, 512),
+    CheckOk(OSc_Setting_SetInt32Value(resolutionSetting,
+                                      static_cast<int32_t>(kResolution)),
             "set resolution");
 
     uint32_t xOff = 0, yOff = 0;
     CheckOk(OSc_AcqTemplate_GetROI(run.tmpl, &xOff, &yOff, &run.width,
                                    &run.height),
             "GetROI");
-    CheckOk(OSc_AcqTemplate_SetNumberOfFrames(run.tmpl, 1),
+    CheckOk(OSc_AcqTemplate_SetNumberOfFrames(run.tmpl, numberOfFrames),
             "SetNumberOfFrames");
 
     CheckOk(OSc_Acquisition_Create(&run.acq, run.tmpl), "Acquisition_Create");
 
-    run.capture.pixels.assign(static_cast<size_t>(run.width) * run.height,
-                              fillValue);
-    CheckOk(OSc_Acquisition_SetData(run.acq, &run.capture), "SetData");
-    CheckOk(OSc_Acquisition_SetFrameCallback(run.acq, OnFrame),
+    CheckOk(OSc_Acquisition_SetData(run.acq, data), "SetData");
+    CheckOk(OSc_Acquisition_SetFrameCallback(run.acq, callback),
             "SetFrameCallback");
 
     CheckOk(OSc_Acquisition_Arm(run.acq), "Acquisition_Arm");
@@ -133,12 +146,15 @@ TEST_CASE("a single-frame acquisition produces a plausible intensity image",
           "[acquisition][slow]") {
 
     LSMFixture fx;
-    AcquisitionRun run = RunSingleFrameAcquisition(fx, 0xFFFF);
+    FrameCapture capture;
+    capture.width = kResolution;
+    capture.height = kResolution;
+    AcquisitionSetup run = RunAcquisition(fx, 1, false, OnFrame, &capture);
 
-    REQUIRE(run.width == 512);
-    REQUIRE(run.height == 512);
-    CHECK(run.capture.callCount == 1);
-    CHECK(run.capture.channel == 0);
+    REQUIRE(run.width == kResolution);
+    REQUIRE(run.height == kResolution);
+    REQUIRE(capture.frames.size() == 1);
+    CHECK(capture.channel == 0);
 
     // Assert only one channel in the output
     uint32_t numChannels = 0;
@@ -147,7 +163,7 @@ TEST_CASE("a single-frame acquisition produces a plausible intensity image",
     REQUIRE(numChannels == 1);
 
     // Assert noise-like qualities on the image
-    auto const &px = run.capture.pixels;
+    auto const &px = capture.frames.front();
     double const mean =
         std::accumulate(px.begin(), px.end(), 0.0) /
         static_cast<double>(px.size());
@@ -161,14 +177,49 @@ TEST_CASE("a single-frame acquisition produces a plausible intensity image",
                         }) /
         static_cast<double>(px.size());
     CHECK(std::sqrt(variance) > 0.5);
-    // Assert the entire data block was overwritten with image data
-    // i.e. that the sentinel value is nowhere to be found.
-    CHECK_FALSE(std::any_of(px.begin(), px.end(),
-                            [](auto v) { return v == 0xFFFF; }));
 
     // Cleanup
     OSc_Acquisition_Destroy(run.acq);
     OSc_AcqTemplate_Destroy(run.tmpl);
+}
+
+TEST_CASE("Cumulative mode delivers one image per frame, each the running "
+          "sum of every frame so far",
+          "[acquisition][slow]") {
+    LSMFixture fx;
+
+    constexpr uint32_t kNumFrames = 3;
+
+    FrameCapture capture;
+    capture.width = kResolution;
+    capture.height = kResolution;
+    AcquisitionSetup run =
+        RunAcquisition(fx, kNumFrames, true, OnFrame, &capture);
+
+    REQUIRE(run.width == kResolution);
+    REQUIRE(run.height == kResolution);
+    REQUIRE(capture.frames.size() == kNumFrames);
+
+    // Cumulative mode never resets or subtracts, so every pixel can only
+    // grow or stay the same from one delivered frame to the next -- i.e.
+    // frame N is frame N-1 plus that frame's own new (random) counts.
+    for (size_t f = 1; f < capture.frames.size(); ++f) {
+        auto const &prev = capture.frames[f - 1];
+        auto const &cur = capture.frames[f];
+        REQUIRE(prev.size() == cur.size());
+        CHECK(std::equal(prev.begin(), prev.end(), cur.begin(),
+                         std::less_equal<>()));
+    }
+
+    OSc_Acquisition_Destroy(run.acq);
+    OSc_AcqTemplate_Destroy(run.tmpl);
+
+    // Restore what this test mutated on the shared device (see
+    // device_test_support.hpp's Environment comment).
+    CheckOk(OSc_Setting_SetBoolValue(
+                FindSetting(run.settings, run.settingCount, "Cumulative"),
+                false),
+            "restore Cumulative");
 }
 
 TEST_CASE("Save Raw Data writes every registered channel, including the "
@@ -185,8 +236,14 @@ TEST_CASE("Save Raw Data writes every registered channel, including the "
     std::filesystem::create_directories(scratch_dir);
     std::string const prefix = (scratch_dir / "acq").string();
 
-    AcquisitionRun run = RunSingleFrameAcquisition(
-        fx, 0, [&](OSc_Setting **settings, size_t settingCount) {
+    // This test only inspects the raw dump file, not the delivered image,
+    // so the capture just needs to exist as a valid callback target.
+    FrameCapture capture;
+    capture.width = kResolution;
+    capture.height = kResolution;
+    AcquisitionSetup run = RunAcquisition(
+        fx, 1, false, OnFrame, &capture,
+        [&](OSc_Setting **settings, size_t settingCount) {
             CheckOk(OSc_Setting_SetStringValue(
                         FindSetting(settings, settingCount,
                                     "File Name Prefix"),

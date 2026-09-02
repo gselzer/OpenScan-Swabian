@@ -201,45 +201,22 @@ auto make_live_histo_proc(
     uint32_t x, y, width, height;
     OScDev_Acquisition_GetROI(acq, &x, &y, &width, &height);
     auto bsource = recycling_bucket_source<u16>::create();
-    struct reset_event {};
-    if constexpr (Cumulative) {
-        return append(
-            reset_event{}, // Reset before flush to get concluding array.
-            scan_histograms<histogram_policy::emit_concluding_events,
-                            reset_event>(
-                arg::num_elements{std::size_t(width * height)},
-                arg::num_bins{std::size_t(1)},
-                arg::max_per_bin<u16>{65535}, bsource,
-                count<histogram_array_event<>>(
-                    ctx->tracker<count_accessor>("frame_counter"),
-                    select<type_list<concluding_histogram_array_event<>>>(
-                        // emit_concluding_events fires exactly one
-                        // concluding histogram_array_event, at flush --
-                        // the entire acquisition accumulates into that
-                        // single cumulative image, so num_frames=1 is what
-                        // stops the acquisition once it arrives.
-                        CallFrameCallbackSink(acq, 0, 1)))));
-    } else {
-        // Stop once the requested number of frames has been delivered --
-        // same idea as BH's LineClockPixellator, which calls
-        // downstream->HandleFinish() (propagating to a stop request) once
-        // currentLine / linesPerFrame == maxFrames. histogram_array_event
-        // has no abstime field (see histogram_events.hpp), so it can't
-        // drive tcspc::count_up_to (which needs one to stamp its FireEvent)
-        // -- CallFrameCallbackSink counts its own invocations instead and
-        // throws tcspc::end_of_processing directly once num_frames is
-        // reached, caught by EventPipeline::next_impl() same as any other
-        // clean completion.
-        uint32_t const num_frames = OScDev_Acquisition_GetNumberOfFrames(acq);
-        return scan_histograms<histogram_policy::clear_every_scan>(
-            arg::num_elements{std::size_t(width * height)},
-            arg::num_bins{std::size_t(1)},
-            arg::max_per_bin<u16>{65535}, bsource,
-            select<type_list<histogram_array_event<>>>(
-                count<histogram_array_event<>>(
-                    ctx->tracker<count_accessor>("frame_counter"),
-                        CallFrameCallbackSink(acq, 0, num_frames))));
-    }
+    uint32_t const num_frames = OScDev_Acquisition_GetNumberOfFrames(acq);
+    // scan_histograms emits a histogram_array_event as soon as each frame's
+    // scan finishes. clear_every_scan clears the arrays, meaning fresh,
+    // non-cumulative frames; the default policy leaves prior counts in place
+    // for cumulative frames.
+    constexpr histogram_policy policy = Cumulative
+                                            ? histogram_policy::default_policy
+                                            : histogram_policy::clear_every_scan;
+    return scan_histograms<policy>(
+        arg::num_elements{std::size_t(width * height)},
+        arg::num_bins{std::size_t(1)},
+        arg::max_per_bin<u16>{65535}, bsource,
+        select<type_list<histogram_array_event<>>>(
+            count<histogram_array_event<>>(
+                ctx->tracker<count_accessor>("frame_counter"),
+                    CallFrameCallbackSink(acq, 0, num_frames))));
 }
 
 template <bool Cumulative>
