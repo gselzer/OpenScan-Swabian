@@ -1,3 +1,7 @@
 option('simulate', type: 'boolean', value: false,
     description: 'Use a synthetic tag source instead of the real Time Tagger SDK/hardware',
 )
+
+option('tests', type: 'feature', value: 'enabled',
+    description: 'Build unit and integration tests',
+)

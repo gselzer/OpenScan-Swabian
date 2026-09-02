@@ -1,53 +1,20 @@
 #pragma once
 
-// A fake of Swabian Instruments' Time Tagger C++ SDK
+// A mock of Swabian Instruments' Time Tagger C++ SDK
 // (https://www.swabianinstruments.com/static/documentation/TimeTagger/).
 // Selected in place of the real vendor SDK headers by meson.build's
 // `simulate` option (via include path ordering), so code written against
 // the real API can build and run without physical hardware or the SDK's
 // hardware-backed license check.
 //
-// Scope: the public API surface of TimeTaggerBase -- the interface that
-// measurement/virtual-channel constructors actually take as a parameter
-// (real code holds a `TimeTaggerBase *`, never the concrete TimeTagger /
-// TimeTaggerVirtual / TimeTaggerNetwork types directly). The real SDK
-// splits this across two classes (TimeTaggerSource, which TimeTaggerBase
-// publicly inherits from, plus TimeTaggerBase itself); we flatten both
-// into one class here since the split doesn't affect what's callable
-// through a TimeTaggerBase*. Also covers Tag and IteratorBase, since code
-// in this project builds a custom IteratorBase subclass to receive raw
-// tags. Deliberately NOT covered: TimeTaggerHardware / TimeTaggerNetwork /
-// TimeTagger-specific methods (FPGA bitfiles, network server hosting,
-// licensing), CustomMeasurementBase (the wrapper-language-oriented
-// IteratorBase subclass -- this project subclasses IteratorBase directly,
-// like the vendor's own C++ examples do), and IteratorBase's virtual-channel
-// allocation / getCaptureDuration() / getConfiguration() -- those only make
-// sense for a real device, or aren't used by anything in this project yet.
-//
-// Most methods here are inert stubs (store-and-return-what-was-set, or a
-// fixed plausible default) -- there is no real hardware or clock
-// underneath them. Synthetic event generation is implemented here, for
-// IteratorBase, via a background thread -- see IteratorBase::PumpLoop.
-// There is deliberately no API anywhere on this fake (TimeTaggerBase or
-// otherwise) for configuring a channel's simulated rate or pattern, since
-// no such API exists on the real TimeTaggerBase either. In particular,
-// this means a device module's own settings (e.g. which channel is the
-// sync/pixel-marker/photon input) are free to pick any channel number --
-// in simulate mode, any channel other than the three hardcoded ones below
-// will simply produce generic Poisson noise at kDefaultChannelRateHz.
-//
-// The three exceptions -- kSimulatedLineClockChannel, kSimulatedSyncChannel
-// and kSimulatedPhotonChannel below -- are hardcoded channel numbers, baked
-// into this fake with no way for device-module code to configure or
-// discover them via any API call. They exist because a scanner's line
-// clock and a detector's sync/photon lines, on real hardware, require no
-// Time Tagger API call at all to appear on an input channel -- they're
-// just physically wired in. A device module written against this API
-// therefore has no call available to make an equivalent signal appear in
-// simulate mode either. This fake instead pretends its one simulated
-// device always has exactly this fixed identity, exactly as if that were
-// part of the simulated hardware itself (compare kFakeSerial/kFakeModel
-// below).
+// This file is heavily AI-generated, and most methods here are stubs
+// (store-and-return-what-was-set, or a fixed plausible default) --
+// there is no real hardware or clock underneath them. Synthetic event
+// generation is implemented here, for IteratorBase, via a background
+// thread -- see IteratorBase::PumpLoop. There is deliberately no API
+// anywhere on this mock (TimeTaggerBase or otherwise) for configuring
+// a channel's simulated rate or pattern, since no such API exists on the
+// real TimeTaggerBase either.
 
 #include <algorithm>
 #include <atomic>
@@ -70,91 +37,20 @@
 
 constexpr channel_t CHANNEL_UNUSED = 0xf8000000;
 
-// Fake-only: the synthetic arrival rate (Hz) used for any registered
-// channel other than the three hardcoded ones below. Not configurable
-// anywhere, on purpose -- see the file comment above.
-constexpr double kDefaultChannelRateHz = 100'000.0;
+// Variables pertaining to data generation parameters. The device module must
+// be synchronized with these values to ensure proper operation.
+constexpr channel_t LineClockChannel = 1;
+constexpr channel_t SyncChannel = 2;
+constexpr channel_t PhotonChannel = 3;
 
-// Fake-only, currently UNUSED (not wired into PumpLoop -- see
-// EventPipeline.cpp's TODO next to its stop_with_error for lost-interval
-// events). The idea: if a single PumpLoop iteration ever needed to advance
-// by more simulated time than this, that's the fake's analog of a real
-// device's circular FIFO overflowing because software fell behind -- the
-// plan is to emit synthetic OverflowBegin/OverflowEnd/MissedEvents tags
-// for the excess span (matching real hardware) rather than either
-// silently retaining every tag no matter how large the backlog gets, or
-// silently dropping/delaying data with no signal to software at all.
-constexpr timestamp_t kMaxSimulatedStepPs = 10'000'000; // 10 ms
+constexpr timestamp_t kMaxSimulatedStepPs = 10'000'000;
 
-// Fake-only: see the file comment above. This one fixed channel always
-// carries a periodic signal, standing in for a scanner's line clock. The
-// period (~250 kHz) matches a real Time Tagger line-clock capture this
-// project's device module was validated against; it is a fixed
-// fake-hardware constant, not derived from any acquisition's pixel rate
-// or ROI width -- this fake has no access to those OpenScan-specific
-// concepts, and no API call is needed from module code to make this
-// channel periodic in the first place.
-constexpr channel_t kSimulatedLineClockChannel = 1;
-// Sized to match the pipeline's currently-configured default ROI (512x512)
-// at kSimulatedPixelPeriodPs (see below): 512 pixels/line *
-// kSimulatedPixelPeriodPs = 0.512 ms/line, so pixel_marker_processor's
-// width+1 generated pixel ticks exactly fill one simulated line period,
-// with no dead time where sync/photon keep firing but there's no active
-// pixel window to bin them into (this fake can't read the acquisition's
-// actual pixel rate or ROI width -- see the file comment above -- so this
-// is necessarily a fixed assumption, not derived; if the configured ROI
-// width OR kSimulatedPixelPeriodPs changes, this should be recomputed to
-// match: width * kSimulatedPixelPeriodPs). This fake's generation rate
-// isn't accelerated -- it runs at whatever rate these constants specify,
-// in real time, so 512 lines (one frame) takes ~0.26 s of both simulated
-// AND wall-clock time (assuming the pipeline can actually keep up -- see
-// kSimulatedPixelPeriodPs's own comment on that).
-constexpr timestamp_t kSimulatedLinePeriodPs = 512'000'000; // ~1.95 kHz (512 px/line * kSimulatedPixelPeriodPs)
-
-// Fake-only: same exception as kSimulatedLineClockChannel above, extended
-// to a simulated laser-sync + photon pair so the sync/photon time
-// correlation this project's pipeline depends on (pair_all_between +
-// time_correlate_at_stop in EventPipeline.cpp) has something to actually
-// correlate in simulate mode. Two channel numbers, matching the default
-// syncChannel/photonChannel settings:
-//
-//  - kSimulatedSyncChannel (and its negative) get a periodic +/- pulse
-//    pair, one per kSimulatedPixelPeriodPs, hardcoded directly in
-//    PumpLoop the same way as the line clock.
-//  - kSimulatedPhotonChannel (and its negative) get Poisson-arrival +/-
-//    pulse pairs, but *gated*: arrivals are only generated within
-//    kSimulatedPhotonGateWidthPs after each sync period's start, then
-//    silent until the next period -- a bounded random process, unlike the
-//    other two's fixed periodic pulses, so PumpLoop special-cases it
-//    directly, generating both polarities together from one shared draw
-//    sequence (not independently per channel) so the rising/falling tags
-//    stay paired for pair_one_between's pulse-width matching downstream.
-constexpr channel_t kSimulatedSyncChannel = 2;
-constexpr channel_t kSimulatedPhotonChannel = 3;
-// Temporarily scaled down from a realistic ~10 MHz sync rate -- see
-// kSimulatedLinePeriodPs's comment above. At 10 MHz, sync alone (2 tags/
-// period) is ~20M tags/sec, and gated photon noise (~1 detection/period,
-// 2 tags) adds roughly another ~20M tags/sec -- both far beyond what this
-// pipeline can sustain. At the 1 MHz used here, aggregate throughput is
-// instead ~2M (sync) + ~2M (photon) = ~4M tags/sec.
-//
-// UNVERIFIED at this rate: the last actual throughput measurement (~800K
-// tags/sec, from a real next_impl() call) predates the tag-buffer/
-// consumer-thread split, the batch/unbatch optimization around it, AND
-// the full-histogram/live-intensity broadcast split (which roughly
-// doubles per-tag consumer work, since every tag now flows through two
-// histogram branches instead of one) -- so it's unknown whether 4M
-// tags/sec is actually sustainable now. If PumpLoop's batches start
-// growing without bound (the same runaway pattern chased down earlier in
-// this project's history), that's this rate exceeding whatever the
-// current real ceiling is; kMaxSimulatedStepPs (unused -- see its own
-// comment) and/or the synthetic-overflow-tags TODO in EventPipeline.cpp
-// are the real fixes, not further lowering this constant.
-constexpr timestamp_t kSimulatedPixelPeriodPs = 1'000'000;   // 1 us (1 MHz) between sync pulses
-constexpr timestamp_t kSimulatedSyncPulseWidth = 1'000;       // ps, sync rising -> falling
-constexpr timestamp_t kSimulatedPhotonPulseWidth = 2'000;     // ps, photon rising -> falling
-constexpr timestamp_t kSimulatedPhotonGateWidthPs = 10'000;   // ps after each sync tick where photon noise can occur
-constexpr double kSimulatedPhotonGateRateHz = 1e8;            // Poisson rate while the gate is open (~1 photon/gate; independent of the period above -- see mean = rate * gate_width)
+constexpr timestamp_t kSimulatedLineWidthPixels = 512;
+constexpr timestamp_t kSimulatedPixelPeriodPs = 1'000'000;
+constexpr timestamp_t kSimulatedSyncPulseWidthPs = 1'000;
+constexpr timestamp_t kSimulatedPhotonPulseWidthPs = 2'000;
+constexpr timestamp_t kSimulatedPhotonGateWidthPs = 10'000;
+constexpr double kSimulatedPhotonGateRateHz = 1e8;
 
 class IteratorBase; // Full definition below, after TimeTaggerBase; only
                      // used by pointer/reference up to that point.
@@ -372,11 +268,12 @@ inline bool operator==(Tag const &a, Tag const &b) {
            a.missed_events == b.missed_events;
 }
 
-// Fake of IteratorBase. Drives a background thread that synthesizes
-// events (Poisson-arrival at the fixed kDefaultChannelRateHz, or the
-// hardcoded line-clock/sync/gated-photon behavior for the three special
-// channels -- see the file comment above) for whatever channels the
-// subclass registers, and delivers them via next_impl(). This is enough to
+// Fake of IteratorBase. Drives a background thread that synthesizes events
+// -- the hardcoded line-clock/sync/gated-photon behavior for the three
+// special channels (see the file comment above), and nothing at all for
+// any other registered channel, since this fake only models the channels
+// this project actually wires up -- and delivers them via next_impl(). This
+// is enough to
 // exercise a real next_impl()-based acquisition design under simulate=true
 // without hardware; it does not model getCaptureDuration(), getConfiguration(),
 // virtual-channel allocation, or startFor()'s auto-stop-after-duration
@@ -516,6 +413,14 @@ class IteratorBase {
 
   private:
     void PumpLoop() {
+        // kSimulatedLineWidthPixels must match the acquisition's configured
+        // ROI width, or pixel_marker_processor will see dead time within
+        // each simulated line. kSimulatedPixelPeriodPs is scaled down from
+        // a more realistic ~10 MHz sync rate -- this pipeline can't sustain
+        // the tag rate that would produce.
+        constexpr timestamp_t line_period_ps =
+            kSimulatedLineWidthPixels * kSimulatedPixelPeriodPs;
+
         double elapsed_ps = 0.0;
         auto last = std::chrono::steady_clock::now();
         std::mt19937_64 rng{std::random_device{}()};
@@ -544,22 +449,38 @@ class IteratorBase {
             bool const photon_pos_registered =
                 std::find(registered_channels_.begin(),
                           registered_channels_.end(),
-                          kSimulatedPhotonChannel) != registered_channels_.end();
+                          PhotonChannel) != registered_channels_.end();
             bool const photon_neg_registered =
                 std::find(registered_channels_.begin(),
                           registered_channels_.end(),
-                          -kSimulatedPhotonChannel) != registered_channels_.end();
+                          -PhotonChannel) != registered_channels_.end();
             if (photon_pos_registered || photon_neg_registered) {
                 // Gated Poisson photon noise correlated to the simulated
-                // sync channel (see kSimulatedPhotonChannel's comment
-                // above). Both polarities are generated together here, from
+                // sync channel (see the sync/photon comment above). Both
+                // polarities are generated together here, from
                 // one shared draw sequence, so pair_one_between finds a
                 // matching rising/falling pair for every simulated photon
                 // instead of two independently drifting tag streams.
                 std::exponential_distribution<double> gate_dist(
                     kSimulatedPhotonGateRateHz);
+                // gate_dist(rng) is continuous, so it occasionally draws a
+                // sub-picosecond value (P(< 1 ps) ~= rate * 1e-12 =~ 1e-4
+                // for kSimulatedPhotonGateRateHz -- not rare enough to
+                // ignore across the tens of thousands of draws in a typical
+                // run). Any time that's used as an offset from a
+                // sync-aligned reference point (a period boundary, or here,
+                // time zero, where the very first SyncChannel tick also
+                // fires), static_cast<timestamp_t>'s truncation can then
+                // land the resulting integer picosecond exactly on top of
+                // that reference instead of strictly after it. Flooring at
+                // 1 ps guarantees "after", with no meaningful effect on the
+                // distribution (kSimulatedPhotonGateRateHz's ~10,000 ps
+                // mean makes this floor negligible).
+                auto const draw_positive_ps = [&] {
+                    return std::max(1.0, gate_dist(rng) * 1e12);
+                };
                 if (!next_photon_candidate_ps)
-                    next_photon_candidate_ps = gate_dist(rng) * 1e12;
+                    next_photon_candidate_ps = draw_positive_ps();
                 for (;;) {
                     // A stop request (running_ flipped false by the
                     // consumer thread reaching its frame count, or by
@@ -584,12 +505,12 @@ class IteratorBase {
                         static_cast<double>(kSimulatedPhotonGateWidthPs)) {
                         if (photon_pos_registered)
                             batch.emplace_back(static_cast<timestamp_t>(t),
-                                                kSimulatedPhotonChannel);
+                                                PhotonChannel);
                         if (photon_neg_registered)
                             batch.emplace_back(
                                 static_cast<timestamp_t>(
-                                    t + kSimulatedPhotonPulseWidth),
-                                -kSimulatedPhotonChannel);
+                                    t + kSimulatedPhotonPulseWidthPs),
+                                -PhotonChannel);
                         // Schedule the next candidate from this pulse's
                         // FALLING edge, not its rising edge -- otherwise a
                         // short draw can land the next rising edge before
@@ -598,15 +519,31 @@ class IteratorBase {
                         // is not physically possible for a real detector
                         // pulse (a single digital line's edges must
                         // strictly alternate).
-                        t += static_cast<double>(kSimulatedPhotonPulseWidth) +
-                             gate_dist(rng) * 1e12;
+                        t += static_cast<double>(kSimulatedPhotonPulseWidthPs) +
+                             draw_positive_ps();
                     } else {
-                        // Past this period's gate -- jump straight to the
-                        // start of the next one instead of continuing to
-                        // draw candidates that would only land in dead
-                        // time.
+                        // Past this period's gate -- jump to the start of
+                        // the next one and draw a FRESH candidate from
+                        // there, rather than treating that boundary itself
+                        // as a candidate. The latter was a real bug: any
+                        // value that's exactly a period boundary always has
+                        // offset_in_period == 0, which always satisfies the
+                        // gate check above, so it would have deterministically
+                        // produced a "detection" -- coincident with that
+                        // period's sync pulse -- on every single jump,
+                        // silently guaranteeing at least one photon per
+                        // period instead of a true mean-~1 Poisson process
+                        // with some periods empty. Drawing fresh here is
+                        // also the mathematically correct way to skip dead
+                        // time in a thinned Poisson process: the
+                        // exponential distribution is memoryless, so
+                        // resetting the draw from the new gate's start is
+                        // statistically equivalent to continuing the same
+                        // rate-kSimulatedPhotonGateRateHz process and just
+                        // never observing it during the dead zone.
                         t = period_start +
-                            static_cast<double>(kSimulatedPixelPeriodPs);
+                            static_cast<double>(kSimulatedPixelPeriodPs) +
+                            draw_positive_ps();
                     }
                 }
             }
@@ -615,44 +552,60 @@ class IteratorBase {
                 // See the same check in the gated-photon loop above.
                 if (!running_)
                     break;
-                if (channel == kSimulatedPhotonChannel ||
-                    channel == -kSimulatedPhotonChannel)
+                if (channel == PhotonChannel ||
+                    channel == -PhotonChannel)
                     continue; // handled above, as a correlated gated pair
 
                 // Hardcoded simulated line-clock/sync signals (see the
-                // constants' own comments above); every other registered
-                // channel gets generic Poisson noise at
-                // kDefaultChannelRateHz instead (see the file comment for
-                // why there's no way to configure a channel's simulated
-                // rate/pattern beyond this fixed set).
-                bool deterministic = true;
+                // constants' own comments above); a registered channel
+                // that isn't one of these produces nothing at all -- this
+                // fake only models the channels this project actually
+                // wires up (see the file comment for why there's no way to
+                // configure a channel's simulated rate/pattern beyond this
+                // fixed set).
                 timestamp_t period = 0;
                 timestamp_t phase_offset = 0;
-                if (channel == kSimulatedLineClockChannel) {
-                    period = kSimulatedLinePeriodPs;
-                } else if (channel == kSimulatedSyncChannel) {
+                if (channel == LineClockChannel) {
+                    period = line_period_ps;
+                } else if (channel == -LineClockChannel) {
+                    // Real line-clock hardware (e.g. OpenScan-OpenScanNIDAQ's
+                    // GenerateLineClock) holds the signal high for one
+                    // line's worth of active pixel-clock samples, then low
+                    // until the next line's rising edge -- i.e. the falling
+                    // edge trails its rising edge by width * pixel_period,
+                    // same as line_period_ps here. This fake deliberately
+                    // models near-zero retrace/dead-time between lines
+                    // (line_period_ps IS that same width * pixel_period
+                    // product -- see its definition above), so the falling
+                    // edge lands 1 ps -- the smallest gap this fake's
+                    // picosecond resolution can represent -- before the
+                    // NEXT rising edge, rather than exactly coincident with
+                    // it. Deliberately not coincident: two tags with
+                    // identical timestamps have no guaranteed relative
+                    // order once sorted (std::sort isn't stable), which
+                    // used to make consumers unable to rely on seeing the
+                    // falling edge before the next rising edge.
+                    period = line_period_ps;
+                    phase_offset = line_period_ps - 1;
+                } else if (channel == SyncChannel) {
                     period = kSimulatedPixelPeriodPs;
-                } else if (channel == -kSimulatedSyncChannel) {
+                } else if (channel == -SyncChannel) {
                     period = kSimulatedPixelPeriodPs;
-                    phase_offset = kSimulatedSyncPulseWidth;
+                    phase_offset = kSimulatedSyncPulseWidthPs;
                 } else {
-                    deterministic = false;
+                    continue; // no simulated signal on this channel
                 }
 
-                std::exponential_distribution<double> interval_dist(
-                    kDefaultChannelRateHz);
                 auto it = next_arrival_ps.find(channel);
                 if (it == next_arrival_ps.end()) {
-                    double const start = deterministic
-                                              ? static_cast<double>(phase_offset)
-                                              : interval_dist(rng) * 1e12;
-                    it = next_arrival_ps.emplace(channel, start).first;
+                    it = next_arrival_ps
+                             .emplace(channel, static_cast<double>(phase_offset))
+                             .first;
                 }
                 while (running_ && it->second < elapsed_ps) {
                     batch.emplace_back(static_cast<timestamp_t>(it->second),
                                         channel);
-                    it->second += deterministic ? static_cast<double>(period)
-                                                 : interval_dist(rng) * 1e12;
+                    it->second += static_cast<double>(period);
                 }
             }
             std::sort(batch.begin(), batch.end(),

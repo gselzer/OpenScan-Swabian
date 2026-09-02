@@ -72,10 +72,22 @@ openscandevicelib_dep = dependency(
     static: true,
     default_options: [
         'devicelib=enabled',
-        'apilib=disabled',
+        # apilib is needed too: our own tests/ drive the built module
+        # through the real OpenScanLib client API (see tests/openscan_module).
+        'apilib=enabled',
         'docs=disabled',
         'tests=disabled',
     ]
+)
+
+# Only used by our own tests (tests/openscan_module) to load and exercise the
+# module below the same way a real host application would. Reuses whatever
+# OpenScanLib subproject configuration openscandevicelib_dep above already
+# triggered (its default_options are only honored on that first dependency()
+# call for a given subproject).
+openscanlib_dep = dependency(
+    'OpenScanLib',
+    fallback: ['OpenScanLib', 'openscan_dep'],
 )
 
 src = files(
@@ -101,3 +113,20 @@ osdev = shared_module(
         time_tagger_dep,
     ],
 )
+
+if get_option('tests').enabled()
+    catch2_with_main_dep = dependency(
+        'catch2-with-main',
+        allow_fallback: true,
+        required: get_option('tests'),
+        disabler: true,
+        include_type: 'system',
+        # Otherwise Catch2's own meson_options.txt defaults 'tests' to
+        # true, and its ~500-case internal self-test suite (which tests
+        # Catch2 itself, not this project) gets built and registered
+        # alongside ours in `meson test`.
+        default_options: ['tests=false'],
+    )
+
+    subdir('tests')
+endif

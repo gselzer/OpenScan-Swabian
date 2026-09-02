@@ -500,10 +500,11 @@ EventPipeline::EventPipeline(OScDev_Device *device, OScDev_Acquisition *acq, std
     pipeline_(make_pipeline(GetData(device), acq, ctx)),
     accessor_(ctx->access<tcspc::buffer_accessor>("tag_buffer"))
 {
-    registerChannel(GetData(device)->syncChannel);
-    registerChannel(GetData(device)->photonChannel);
-    registerChannel(-1 * GetData(device)->photonChannel);
-    registerChannel(GetData(device)->lineClockChannel);
+    auto* data = GetData(device);
+    for (auto const &channel : {data->syncChannel, data->photonChannel, data->lineClockChannel}) {
+        registerChannel(channel);
+        registerChannel(-1 * channel);
+    }
     consumer_thread_ = std::thread([this]() { PumpConsumerLoop(); });
     finishInitialization();
 }
