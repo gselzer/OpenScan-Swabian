@@ -34,24 +34,35 @@ image.
 
 ## Building
 
-Requires [Meson](https://mesonbuild.com/) (>=1.9.0) and Ninja, and an MSVC or
+Building this device module requires [Meson](https://mesonbuild.com/) (>=1.9.0) and Ninja, and an MSVC or
 `clang-cl` toolchain (this project is Windows-only, matching the Time Tagger
-SDK). From a Visual Studio developer command prompt (or after running
-`vcvars64.bat`):
+SDK). Building should be done on a Visual Studio developer command prompt (or after running
+`vcvars64.bat`).
+
+### Hardware
+
+By default the module builds against a real Time Tagger and the vendor SDK.
+
+If the vendor SDK isn't installed yet, download and run the Windows
+installer from Swabian Instruments'
+[installation guide](https://www.swabianinstruments.com/static/documentation/TimeTagger/gettingStarted/installation.html)
+before building — this installs the headers and libraries the build links
+against, along with the USB drivers and license/runtime components needed
+to actually run against hardware.
+
+The build locates the installed SDK via the `TIMETAGGER_INSTALL_PATH`
+environment variable (set by Swabian's installer to the SDK's install
+root). If that variable isn't set, the build falls back to the default
+install location (`C:/Program Files/Swabian Instruments/Time Tagger`) and
+logs a warning — set `TIMETAGGER_INSTALL_PATH` yourself if the SDK is
+installed somewhere else.
 
 ```
 meson setup builddir
-ninja -C builddir
+meson compile -C builddir
 ```
 
-This produces `OpenScanSwabian.osdev` (the OpenScan device module, loadable
-by OpenScanLib/Micro-Manager).
-
-### Simulate vs. real hardware
-
-By default the module builds against a real Time Tagger and the vendor SDK.
-This expects the vendor SDK installed at its default location,
-`C:/Program Files/Swabian Instruments/Time Tagger/driver`.
+### Simulation
 
 To build against the fake SDK in `src/fake_timetagger/` instead — no
 hardware or vendor SDK installation needed, useful for developing and
@@ -59,7 +70,7 @@ testing the pipeline itself:
 
 ```
 meson setup builddir -Dsimulate=true
-ninja -C builddir
+meson compile -C builddir
 ```
 
 No source changes are needed to switch between the two — `#include
@@ -160,8 +171,8 @@ When built with `-Dsimulate=true`, `src/fake_timetagger/` synthesizes
 activity on three fixed channels so the pipeline has realistic-looking data
 to process without hardware: a line clock, a sync channel, and gated Poisson
 photon noise correlated to the sync channel. These are fixed, hardcoded
-constants (`kSimulatedLineClockChannel`, `kSimulatedSyncChannel`,
-`kSimulatedPhotonChannel`, and their rates, in
+constants (`LineClockChannel`, `SyncChannel`, `PhotonChannel`, and their
+rates, in
 `src/fake_timetagger/include/TimeTagger.h`) rather than derived from the
 current OpenScan acquisition's settings — the fake has no access to
 OpenScan-specific concepts like pixel rate or ROI, by design (see that

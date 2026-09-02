@@ -23,7 +23,30 @@ if get_option('simulate')
         include_directories: include_directories('src/fake_timetagger/include'),
     )
 else
-    time_tagger_dir = 'C:/Program Files/Swabian Instruments/Time Tagger/driver'
+    # TIMETAGGER_INSTALL_PATH isn't documented by Swabian Instruments, but
+    # their Windows installer does set it (observed in practice) to the
+    # SDK's actual install root -- prefer it when present, since an install
+    # to a non-default location or drive is otherwise invisible to this
+    # build. Read via `cmd /c echo` (an unset variable echoes back its own
+    # literal '%NAME%' unexpanded, which is how the fallback below detects
+    # "not set") since Meson has no built-in way to read the environment.
+    time_tagger_install_path = run_command(
+        'cmd', '/c', 'echo', '%TIMETAGGER_INSTALL_PATH%',
+        check: true,
+    ).stdout().strip()
+
+    if time_tagger_install_path == '' or time_tagger_install_path.startswith('%')
+        time_tagger_root = 'C:/Program Files/Swabian Instruments/Time Tagger'
+        warning(
+            'TIMETAGGER_INSTALL_PATH is not set; assuming the Time Tagger SDK is installed at the default location (' + time_tagger_root + ').',
+            'If it is installed elsewhere, set the TIMETAGGER_INSTALL_PATH environment variable to the SDK install root.',
+            'If it is not installed at all, download and run the installer from https://www.swabianinstruments.com/static/documentation/TimeTagger/gettingStarted/installation.html',
+        )
+    else
+        time_tagger_root = time_tagger_install_path.strip('\\/')
+    endif
+
+    time_tagger_dir = time_tagger_root / 'driver'
     host_cpu = host_machine.cpu_family()
     if host_cpu == 'x86_64'
         time_tagger_suffix = 'x64'

@@ -1,0 +1,35 @@
+# Builds and runs the test suite against the fake Time Tagger backend
+# (-Dsimulate=true) -- no real hardware or vendor SDK needed. See README.md
+# for building against the real SDK, which this workflow doesn't exercise.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install Meson and Ninja
+        run: python -m pip install --upgrade pip meson ninja
+
+      - name: Set up MSVC developer environment
+        uses: compnerd/gha-setup-vsdevenv@452f99effa381b81c025ccfbdccaca509bff1b29 # v7
+
+      - name: Configure
+        run: meson setup builddir -Dsimulate=true
+
+      - name: Build
+        run: meson compile -C builddir
+
+      - name: Test
+        run: meson test -C builddir -v
