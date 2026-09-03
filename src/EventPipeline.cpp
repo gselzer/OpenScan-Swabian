@@ -530,33 +530,9 @@ void EventPipeline::on_start() {
 }
 
 void EventPipeline::on_stop() {
-    try {
-        pipeline_.flush();
-    }
-    catch (tcspc::end_of_processing const &e) {
-        // Documented libtcspc protocol (see errors.hpp): a processor
-        // signals a clean, non-error completion by flushing its own
-        // downstream and throwing this; we are "the data source" that's
-        // required to catch it, and must not send it any more events
-        // afterward. finish_running() is safe to call from here (unlike
-        // stop()) since next_impl() already runs under IteratorBase's own
-        // lock.
-        OScDev_Log_Info(device_, ("EventPipeline: acquisition complete: " + std::string(e.what())).c_str());
-        finish_running();
-    } catch (std::exception const &e) {
-        // Any other exception (e.g. stop_with_error's std::runtime_error,
-        // which flush() can trigger same as handle()) is a genuine error
-        // in the data. Must still be caught here, same as in next_impl()
-        // and PumpConsumerLoop(): letting it escape would skip
-        // accessor_.halt()/consumer_thread_.join() below (leaking a
-        // joinable thread -- std::terminate() the next time it's
-        // destroyed) and propagate a C++ exception across the C ABI into
-        // OpenScanLib, which on_stop()'s caller (IteratorBase::stop(),
-        // called from ~EventPipeline() or Stop()) is not prepared for.
-        OScDev_Log_Error(device_, ("EventPipeline: pipeline error: " + std::string(e.what())).c_str());
-        finish_running();
-    }
+    // Preempt remaining tag batches with a halt.
     accessor_.halt();
+    // Finish the current batch and then exit.
     consumer_thread_.join();
 }
 
@@ -573,6 +549,11 @@ void EventPipeline::PumpConsumerLoop() {
         // lock.
         OScDev_Log_Info(device_, ("EventPipeline: acquisition complete: " + std::string(e.what())).c_str());
         finish_running();
+    } catch (tcspc::source_halted const &) {
+        OScDev_Log_Info(
+            device_,
+            "EventPipeline: consumer halted, remaining tags discarded"
+        );
     } catch (std::exception const &e) {
         // Any other exception (e.g. stop_with_error's std::runtime_error)
         // is a genuine error in the data -- can't continue either way,
