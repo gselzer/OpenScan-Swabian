@@ -18,16 +18,16 @@ TEST_CASE("scanTimeTagger reports exactly the one fake device",
           "[connection]") {
     auto const serials = scanTimeTagger(false);
     REQUIRE(serials.size() == 1);
-    CHECK(serials[0] == kFakeSerial);
+    CHECK(serials[0] == FAKE_SERIAL);
 
     auto const withModel = scanTimeTagger(true);
     REQUIRE(withModel.size() == 1);
-    CHECK(withModel[0] == std::string(kFakeSerial) + "," + kFakeModel);
+    CHECK(withModel[0] == std::string(FAKE_SERIAL) + "," + FAKE_MODEL);
 }
 
 TEST_CASE("getTimeTaggerModel resolves the fake serial and rejects others",
           "[connection]") {
-    CHECK(getTimeTaggerModel(kFakeSerial) == kFakeModel);
+    CHECK(getTimeTaggerModel(FAKE_SERIAL) == FAKE_MODEL);
     CHECK_THROWS_AS(getTimeTaggerModel("not-a-real-serial"),
                      std::runtime_error);
 }
@@ -39,7 +39,7 @@ TEST_CASE(
     REQUIRE(empty != nullptr);
     freeTimeTagger(empty);
 
-    TimeTaggerBase *matching = createTimeTagger(kFakeSerial);
+    TimeTaggerBase *matching = createTimeTagger(FAKE_SERIAL);
     REQUIRE(matching != nullptr);
     freeTimeTagger(matching);
 
@@ -49,7 +49,7 @@ TEST_CASE(
 TEST_CASE("IteratorBase start/stop/abort lifecycle", "[lifecycle]") {
     TimeTaggerBase tagger;
     CollectingIterator iter(&tagger);
-    iter.registerChannel(LineClockChannel);
+    iter.registerChannel(LINE_CLOCK_CHANNEL);
 
     CHECK_FALSE(iter.isRunning());
 
@@ -64,7 +64,7 @@ TEST_CASE("IteratorBase start/stop/abort lifecycle", "[lifecycle]") {
     iter.stop();
     CHECK_FALSE(iter.isRunning());
 
-    // stop() is documented as idempotent (guards on pump_thread_.joinable()).
+    // stop() is documented as idempotent (guards on pumpThread_.joinable()).
     iter.stop();
     CHECK_FALSE(iter.isRunning());
 
@@ -82,7 +82,7 @@ TEST_CASE("waitUntilFinished times out while running and returns promptly "
           "[lifecycle]") {
     TimeTaggerBase tagger;
     CollectingIterator iter(&tagger);
-    iter.registerChannel(LineClockChannel);
+    iter.registerChannel(LINE_CLOCK_CHANNEL);
     iter.start();
 
     // Nothing will stop the acquisition on its own, so a short timeout must

@@ -39,18 +39,18 @@ constexpr channel_t CHANNEL_UNUSED = 0xf8000000;
 
 // Variables pertaining to data generation parameters. The device module must
 // be synchronized with these values to ensure proper operation.
-constexpr channel_t LineClockChannel = 1;
-constexpr channel_t SyncChannel = 2;
-constexpr channel_t PhotonChannel = 3;
+constexpr channel_t LINE_CLOCK_CHANNEL = 1;
+constexpr channel_t SYNC_CHANNEL = 2;
+constexpr channel_t PHOTON_CHANNEL = 3;
 
-constexpr timestamp_t kMaxSimulatedStepPs = 10'000'000;
+constexpr timestamp_t MAX_SIMULATED_STEP_PS = 10'000'000;
 
-constexpr timestamp_t kSimulatedLineWidthPixels = 512;
-constexpr timestamp_t kSimulatedPixelPeriodPs = 1'000'000;
-constexpr timestamp_t kSimulatedSyncPulseWidthPs = 1'000;
-constexpr timestamp_t kSimulatedPhotonPulseWidthPs = 2'000;
-constexpr timestamp_t kSimulatedPhotonGateWidthPs = 10'000;
-constexpr double kSimulatedPhotonGateRateHz = 1e8;
+constexpr timestamp_t SIMULATED_LINE_WIDTH_PIXELS = 512;
+constexpr timestamp_t SIMULATED_PIXEL_PERIOD_PS = 1'000'000;
+constexpr timestamp_t SIMULATED_SYNC_PULSE_WIDTH_PS = 1'000;
+constexpr timestamp_t SIMULATED_PHOTON_PULSE_WIDTH_PS = 2'000;
+constexpr timestamp_t SIMULATED_PHOTON_GATE_WIDTH_PS = 10'000;
+constexpr double SIMULATED_PHOTON_GATE_RATE_HZ = 1e8;
 
 class IteratorBase; // Full definition below, after TimeTaggerBase; only
                      // used by pointer/reference up to that point.
@@ -96,34 +96,34 @@ class TimeTaggerBase {
     // --- from the real SDK's TimeTaggerSource ---------------------------
 
     void setInputDelay(channel_t channel, timestamp_t delay) {
-        input_delay_ps_[channel] = delay;
+        inputDelayPs_[channel] = delay;
     }
     [[nodiscard]] timestamp_t getInputDelay(channel_t channel) {
-        return input_delay_ps_[channel];
+        return inputDelayPs_[channel];
     }
 
     void setDelayHardware(channel_t channel, timestamp_t delay) {
-        hardware_delay_ps_[channel] = delay;
+        hardwareDelayPs_[channel] = delay;
     }
     [[nodiscard]] timestamp_t getDelayHardware(channel_t channel) {
-        return hardware_delay_ps_[channel];
+        return hardwareDelayPs_[channel];
     }
     [[nodiscard]] std::vector<timestamp_t> getDelayHardwareRange(channel_t) {
         return {-2'500'000, 2'500'000}; // plausible ttx-like range, in ps
     }
 
     void setDelaySoftware(channel_t channel, timestamp_t delay) {
-        software_delay_ps_[channel] = delay;
+        softwareDelayPs_[channel] = delay;
     }
     [[nodiscard]] timestamp_t getDelaySoftware(channel_t channel) {
-        return software_delay_ps_[channel];
+        return softwareDelayPs_[channel];
     }
 
     timestamp_t setDeadtime(channel_t channel, timestamp_t deadtime) {
-        return deadtime_ps_[channel] = deadtime;
+        return deadtimePs_[channel] = deadtime;
     }
     [[nodiscard]] timestamp_t getDeadtime(channel_t channel) {
-        return deadtime_ps_[channel];
+        return deadtimePs_[channel];
     }
     [[nodiscard]] std::vector<timestamp_t> getDeadtimeRange(channel_t) {
         return {0, 716'000'000}; // plausible ttx-like max, in ps
@@ -131,68 +131,68 @@ class TimeTaggerBase {
 
     void setConditionalFilter(std::vector<channel_t> trigger,
                                std::vector<channel_t> filtered) {
-        conditional_filter_trigger_ = std::move(trigger);
-        conditional_filter_filtered_ = std::move(filtered);
+        conditionalFilterTrigger_ = std::move(trigger);
+        conditionalFilterFiltered_ = std::move(filtered);
     }
     void clearConditionalFilter() { setConditionalFilter({}, {}); }
     [[nodiscard]] std::vector<channel_t> getConditionalFilterTrigger() {
-        return conditional_filter_trigger_;
+        return conditionalFilterTrigger_;
     }
     [[nodiscard]] std::vector<channel_t> getConditionalFilterFiltered() {
-        return conditional_filter_filtered_;
+        return conditionalFilterFiltered_;
     }
 
     void setEventDivider(channel_t channel, unsigned int divider) {
-        event_divider_[channel] = divider;
+        eventDivider_[channel] = divider;
     }
     [[nodiscard]] unsigned int getEventDivider(channel_t channel) {
-        auto const it = event_divider_.find(channel);
-        return it == event_divider_.end() ? 1 : it->second;
+        auto const it = eventDivider_.find(channel);
+        return it == eventDivider_.end() ? 1 : it->second;
     }
 
-    [[nodiscard]] long long getOverflows() const { return overflow_count_; }
+    [[nodiscard]] long long getOverflows() const { return overflowCount_; }
     long long getOverflowsAndClear() {
-        long long const count = overflow_count_;
-        overflow_count_ = 0;
+        long long const count = overflowCount_;
+        overflowCount_ = 0;
         return count;
     }
-    void clearOverflows() { overflow_count_ = 0; }
+    void clearOverflows() { overflowCount_ = 0; }
 
     void setReferenceClock(channel_t clock_channel, double clock_frequency = 10e6,
                             double = 1e-3,
                             channel_t synchronization_channel = CHANNEL_UNUSED,
                             timestamp_t synchronization_offset = 0, bool = true) {
-        reference_clock_state_.clock_channel = clock_channel;
-        reference_clock_state_.clock_period =
+        referenceClockState_.clock_channel = clock_channel;
+        referenceClockState_.clock_period =
             static_cast<timestamp_t>(1e12 / clock_frequency);
-        reference_clock_state_.synchronization_channel = synchronization_channel;
-        reference_clock_state_.synchronization_offset = synchronization_offset;
-        reference_clock_state_.enabled = true;
-        reference_clock_state_.is_locked = true; // nothing to fail to lock to
+        referenceClockState_.synchronization_channel = synchronization_channel;
+        referenceClockState_.synchronization_offset = synchronization_offset;
+        referenceClockState_.enabled = true;
+        referenceClockState_.is_locked = true; // nothing to fail to lock to
     }
-    void disableReferenceClock() { reference_clock_state_.enabled = false; }
+    void disableReferenceClock() { referenceClockState_.enabled = false; }
     [[nodiscard]] ReferenceClockState getReferenceClockState() const {
-        return reference_clock_state_;
+        return referenceClockState_;
     }
 
     // --- from the real SDK's TimeTaggerBase -----------------------------
 
     void setSoftwareClock(channel_t input_channel, double input_frequency = 10e6,
                            double averaging_periods = 1000, bool = true) {
-        software_clock_state_.input_channel = input_channel;
-        software_clock_state_.clock_period =
+        softwareClockState_.input_channel = input_channel;
+        softwareClockState_.clock_period =
             static_cast<timestamp_t>(1e12 / input_frequency);
-        software_clock_state_.averaging_periods = averaging_periods;
-        software_clock_state_.enabled = true;
-        software_clock_state_.is_locked = true;
+        softwareClockState_.averaging_periods = averaging_periods;
+        softwareClockState_.enabled = true;
+        softwareClockState_.is_locked = true;
     }
-    void disableSoftwareClock() { software_clock_state_.enabled = false; }
+    void disableSoftwareClock() { softwareClockState_.enabled = false; }
     [[nodiscard]] SoftwareClockState getSoftwareClockState() const {
-        return software_clock_state_;
+        return softwareClockState_;
     }
 
-    [[nodiscard]] unsigned int getFence(bool alloc_fence = true) {
-        return alloc_fence ? ++next_fence_ : next_fence_;
+    [[nodiscard]] unsigned int getFence(bool allocFence = true) {
+        return allocFence ? ++nextFence_ : nextFence_;
     }
     [[nodiscard]] bool waitForFence(unsigned int, std::int64_t = -1) {
         return true; // no pipeline to wait on
@@ -218,25 +218,25 @@ class TimeTaggerBase {
         return 0; // not tracked
     }
 
-    void xtra_setAutoStart(bool auto_start) { auto_start_ = auto_start; }
-    [[nodiscard]] bool xtra_getAutoStart() const { return auto_start_; }
+    void xtra_setAutoStart(bool autoStart) { autoStart_ = autoStart; }
+    [[nodiscard]] bool xtra_getAutoStart() const { return autoStart_; }
 
   private:
-    std::map<channel_t, timestamp_t> input_delay_ps_;
-    std::map<channel_t, timestamp_t> hardware_delay_ps_;
-    std::map<channel_t, timestamp_t> software_delay_ps_;
-    std::map<channel_t, timestamp_t> deadtime_ps_;
-    std::map<channel_t, unsigned int> event_divider_;
+    std::map<channel_t, timestamp_t> inputDelayPs_;
+    std::map<channel_t, timestamp_t> hardwareDelayPs_;
+    std::map<channel_t, timestamp_t> softwareDelayPs_;
+    std::map<channel_t, timestamp_t> deadtimePs_;
+    std::map<channel_t, unsigned int> eventDivider_;
 
-    std::vector<channel_t> conditional_filter_trigger_;
-    std::vector<channel_t> conditional_filter_filtered_;
+    std::vector<channel_t> conditionalFilterTrigger_;
+    std::vector<channel_t> conditionalFilterFiltered_;
 
-    long long overflow_count_ = 0;
-    unsigned int next_fence_ = 0;
-    bool auto_start_ = true;
+    long long overflowCount_ = 0;
+    unsigned int nextFence_ = 0;
+    bool autoStart_ = true;
 
-    ReferenceClockState reference_clock_state_;
-    SoftwareClockState software_clock_state_;
+    ReferenceClockState referenceClockState_;
+    SoftwareClockState softwareClockState_;
 };
 
 // A single event delivered from the (simulated) Time Tagger backend.
@@ -306,32 +306,32 @@ class IteratorBase {
             auto lock = getLock();
             on_start();
         }
-        pump_thread_ = std::thread(&IteratorBase::PumpLoop, this);
+        pumpThread_ = std::thread(&IteratorBase::PumpLoop, this);
     }
 
     // Fake-only simplification: does not auto-stop after capture_duration.
-    void startFor(timestamp_t /*capture_duration*/, bool clear_first = true) {
-        if (clear_first)
+    void startFor(timestamp_t /*capture_duration*/, bool clearFirst = true) {
+        if (clearFirst)
             clear();
         start();
     }
 
     void stop() {
         // Guard on joinable(), not running_: finish_running() (below) can
-        // set running_ = false without joining pump_thread_, so a
+        // set running_ = false without joining pumpThread_, so a
         // running_-only guard would leave that thread unjoined forever --
         // std::terminate() the next time something tries to reuse or
-        // destroy pump_thread_. joinable() correctly stays true in that
+        // destroy pumpThread_. joinable() correctly stays true in that
         // case, and becomes false only once actually joined, making this
         // safe to call again afterward (idempotent).
-        if (!pump_thread_.joinable())
+        if (!pumpThread_.joinable())
             return;
         {
             auto lock = getLock();
             pre_stop();
         }
         running_ = false;
-        pump_thread_.join();
+        pumpThread_.join();
         auto lock = getLock();
         on_stop();
     }
@@ -344,13 +344,13 @@ class IteratorBase {
     [[nodiscard]] bool isRunning() const { return running_; }
 
     // Matches real semantics ("roughly equivalent to a polling loop with
-    // sleep()"): safe to call from any thread, never touches pump_thread_
+    // sleep()"): safe to call from any thread, never touches pumpThread_
     // directly.
-    bool waitUntilFinished(std::int64_t timeout_ms = -1) {
+    bool waitUntilFinished(std::int64_t timeoutMs = -1) {
         auto const deadline = std::chrono::steady_clock::now() +
-                               std::chrono::milliseconds(timeout_ms);
+                               std::chrono::milliseconds(timeoutMs);
         while (running_) {
-            if (timeout_ms >= 0 && std::chrono::steady_clock::now() >= deadline)
+            if (timeoutMs >= 0 && std::chrono::steady_clock::now() >= deadline)
                 return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -369,21 +369,21 @@ class IteratorBase {
 
     void registerChannel(channel_t channel) {
         auto lock = getLock();
-        registered_channels_.push_back(channel);
+        registeredChannels_.push_back(channel);
     }
     void unregisterChannel(channel_t channel) {
         auto lock = getLock();
-        registered_channels_.erase(
-            std::remove(registered_channels_.begin(),
-                        registered_channels_.end(), channel),
-            registered_channels_.end());
+        registeredChannels_.erase(
+            std::remove(registeredChannels_.begin(),
+                        registeredChannels_.end(), channel),
+            registeredChannels_.end());
     }
 
     void finishInitialization() { start(); }
 
     // Lets a measurement stop itself from inside next_impl() (directly, or
     // via a callback invoked from there) without deadlocking: unlike
-    // stop(), this does not acquire the lock or join pump_thread_, both of
+    // stop(), this does not acquire the lock or join pumpThread_, both of
     // which would be unsafe here since next_impl() is called by
     // PumpLoop() while already holding that same lock, on that same
     // thread. Matches the real SDK's finish_running(), including its
@@ -393,7 +393,7 @@ class IteratorBase {
     //
     // Ensures no further data is delivered (PumpLoop's while(running_)
     // check will see this on its next iteration and exit), but leaves
-    // pump_thread_ unjoined -- a later stop() (e.g. from ~EventPipeline()
+    // pumpThread_ unjoined -- a later stop() (e.g. from ~EventPipeline()
     // or an explicit Stop()) still needs to run to actually join it and
     // call on_stop(). Until then, isRunning() correctly reports false
     // even though the object is still alive, matching how BH's acqState
@@ -413,24 +413,24 @@ class IteratorBase {
 
   private:
     void PumpLoop() {
-        // kSimulatedLineWidthPixels must match the acquisition's configured
+        // SIMULATED_LINE_WIDTH_PIXELS must match the acquisition's configured
         // ROI width, or pixel_marker_processor will see dead time within
-        // each simulated line. kSimulatedPixelPeriodPs is scaled down from
+        // each simulated line. SIMULATED_PIXEL_PERIOD_PS is scaled down from
         // a more realistic ~10 MHz sync rate -- this pipeline can't sustain
         // the tag rate that would produce.
-        constexpr timestamp_t line_period_ps =
-            kSimulatedLineWidthPixels * kSimulatedPixelPeriodPs;
-        // Assumes a square frame (kSimulatedLineWidthPixels lines, same as
+        constexpr timestamp_t linePeriodPs =
+            SIMULATED_LINE_WIDTH_PIXELS * SIMULATED_PIXEL_PERIOD_PS;
+        // Assumes a square frame (SIMULATED_LINE_WIDTH_PIXELS lines, same as
         // the line width in pixels) -- matches this fake's only supported
         // resolution (see test_acquisition.cpp's kResolution comment).
-        constexpr timestamp_t frame_period_ps =
-            kSimulatedLineWidthPixels * line_period_ps;
+        constexpr timestamp_t framePeriodPs =
+            SIMULATED_LINE_WIDTH_PIXELS * linePeriodPs;
 
-        // elapsed_ps free-runs with the wall clock; generated_ps/
-        // next_frame_boundary_ps cap how much of it any one iteration is
+        // elapsedPs free-runs with the wall clock; generatedPs/
+        // nextFrameBoundaryPs cap how much of it any one iteration is
         // allowed to turn into tags. Without that cap, a downstream
         // consumer that falls behind real time causes every subsequent
-        // iteration to see a larger elapsed_s (it's been longer since the
+        // iteration to see a larger elapsedS (it's been longer since the
         // last, slower, next_impl() call returned), which generates an
         // even bigger batch, taking next_impl() even longer -- an
         // unbounded feedback loop whose batches only ever grow. Capping
@@ -438,28 +438,28 @@ class IteratorBase {
         // backlog of whole frames instead, and keeps next_impl() calls
         // (and therefore how long Stop has to wait before running_ is
         // rechecked) bounded to at most one frame's worth of tags.
-        double elapsed_ps = 0.0;
-        double generated_ps = 0.0;
-        double next_frame_boundary_ps = static_cast<double>(frame_period_ps);
+        double elapsedPs = 0.0;
+        double generatedPs = 0.0;
+        double nextFrameBoundaryPs = static_cast<double>(framePeriodPs);
         auto last = std::chrono::steady_clock::now();
         std::mt19937_64 rng{std::random_device{}()};
-        std::map<channel_t, double> next_arrival_ps;
-        std::optional<double> next_photon_candidate_ps;
+        std::map<channel_t, double> nextArrivalPs;
+        std::optional<double> nextPhotonCandidatePs;
 
         while (running_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
             auto const now = std::chrono::steady_clock::now();
-            double const elapsed_s =
+            double const elapsedS =
                 std::chrono::duration_cast<std::chrono::duration<double>>(
                     now - last)
                     .count();
             last = now;
-            elapsed_ps += elapsed_s * 1e12;
-            double const generate_until_ps =
-                std::min(elapsed_ps, next_frame_boundary_ps);
-            timestamp_t const begin_time = static_cast<timestamp_t>(generated_ps);
-            timestamp_t const end_time = static_cast<timestamp_t>(generate_until_ps);
+            elapsedPs += elapsedS * 1e12;
+            double const generateUntilPs =
+                std::min(elapsedPs, nextFrameBoundaryPs);
+            timestamp_t const beginTime = static_cast<timestamp_t>(generatedPs);
+            timestamp_t const endTime = static_cast<timestamp_t>(generateUntilPs);
 
             auto lock = getLock();
             if (!running_)
@@ -467,41 +467,41 @@ class IteratorBase {
 
             std::vector<Tag> batch;
 
-            bool const photon_pos_registered =
-                std::find(registered_channels_.begin(),
-                          registered_channels_.end(),
-                          PhotonChannel) != registered_channels_.end();
-            bool const photon_neg_registered =
-                std::find(registered_channels_.begin(),
-                          registered_channels_.end(),
-                          -PhotonChannel) != registered_channels_.end();
-            if (photon_pos_registered || photon_neg_registered) {
+            bool const photonPosRegistered =
+                std::find(registeredChannels_.begin(),
+                          registeredChannels_.end(),
+                          PHOTON_CHANNEL) != registeredChannels_.end();
+            bool const photonNegRegistered =
+                std::find(registeredChannels_.begin(),
+                          registeredChannels_.end(),
+                          -PHOTON_CHANNEL) != registeredChannels_.end();
+            if (photonPosRegistered || photonNegRegistered) {
                 // Gated Poisson photon noise correlated to the simulated
                 // sync channel (see the sync/photon comment above). Both
                 // polarities are generated together here, from
                 // one shared draw sequence, so pair_one_between finds a
                 // matching rising/falling pair for every simulated photon
                 // instead of two independently drifting tag streams.
-                std::exponential_distribution<double> gate_dist(
-                    kSimulatedPhotonGateRateHz);
-                // gate_dist(rng) is continuous, so it occasionally draws a
+                std::exponential_distribution<double> gateDist(
+                    SIMULATED_PHOTON_GATE_RATE_HZ);
+                // gateDist(rng) is continuous, so it occasionally draws a
                 // sub-picosecond value (P(< 1 ps) ~= rate * 1e-12 =~ 1e-4
-                // for kSimulatedPhotonGateRateHz -- not rare enough to
+                // for SIMULATED_PHOTON_GATE_RATE_HZ -- not rare enough to
                 // ignore across the tens of thousands of draws in a typical
                 // run). Any time that's used as an offset from a
                 // sync-aligned reference point (a period boundary, or here,
-                // time zero, where the very first SyncChannel tick also
+                // time zero, where the very first SYNC_CHANNEL tick also
                 // fires), static_cast<timestamp_t>'s truncation can then
                 // land the resulting integer picosecond exactly on top of
                 // that reference instead of strictly after it. Flooring at
                 // 1 ps guarantees "after", with no meaningful effect on the
-                // distribution (kSimulatedPhotonGateRateHz's ~10,000 ps
+                // distribution (SIMULATED_PHOTON_GATE_RATE_HZ's ~10,000 ps
                 // mean makes this floor negligible).
-                auto const draw_positive_ps = [&] {
-                    return std::max(1.0, gate_dist(rng) * 1e12);
+                auto const drawPositivePs = [&] {
+                    return std::max(1.0, gateDist(rng) * 1e12);
                 };
-                if (!next_photon_candidate_ps)
-                    next_photon_candidate_ps = draw_positive_ps();
+                if (!nextPhotonCandidatePs)
+                    nextPhotonCandidatePs = drawPositivePs();
                 for (;;) {
                     // A stop request (running_ flipped false by the
                     // consumer thread reaching its frame count, or by
@@ -513,25 +513,25 @@ class IteratorBase {
                     // nobody will ever consume.
                     if (!running_)
                         break;
-                    double &t = *next_photon_candidate_ps;
-                    if (t >= generate_until_ps)
+                    double &t = *nextPhotonCandidatePs;
+                    if (t >= generateUntilPs)
                         break;
-                    auto const period_index = static_cast<std::int64_t>(
-                        t / static_cast<double>(kSimulatedPixelPeriodPs));
-                    double const period_start =
-                        static_cast<double>(period_index) *
-                        static_cast<double>(kSimulatedPixelPeriodPs);
-                    double const offset_in_period = t - period_start;
-                    if (offset_in_period <
-                        static_cast<double>(kSimulatedPhotonGateWidthPs)) {
-                        if (photon_pos_registered)
+                    auto const periodIndex = static_cast<std::int64_t>(
+                        t / static_cast<double>(SIMULATED_PIXEL_PERIOD_PS));
+                    double const periodStart =
+                        static_cast<double>(periodIndex) *
+                        static_cast<double>(SIMULATED_PIXEL_PERIOD_PS);
+                    double const offsetInPeriod = t - periodStart;
+                    if (offsetInPeriod <
+                        static_cast<double>(SIMULATED_PHOTON_GATE_WIDTH_PS)) {
+                        if (photonPosRegistered)
                             batch.emplace_back(static_cast<timestamp_t>(t),
-                                                PhotonChannel);
-                        if (photon_neg_registered)
+                                                PHOTON_CHANNEL);
+                        if (photonNegRegistered)
                             batch.emplace_back(
                                 static_cast<timestamp_t>(
-                                    t + kSimulatedPhotonPulseWidthPs),
-                                -PhotonChannel);
+                                    t + SIMULATED_PHOTON_PULSE_WIDTH_PS),
+                                -PHOTON_CHANNEL);
                         // Schedule the next candidate from this pulse's
                         // FALLING edge, not its rising edge -- otherwise a
                         // short draw can land the next rising edge before
@@ -540,15 +540,15 @@ class IteratorBase {
                         // is not physically possible for a real detector
                         // pulse (a single digital line's edges must
                         // strictly alternate).
-                        t += static_cast<double>(kSimulatedPhotonPulseWidthPs) +
-                             draw_positive_ps();
+                        t += static_cast<double>(SIMULATED_PHOTON_PULSE_WIDTH_PS) +
+                             drawPositivePs();
                     } else {
                         // Past this period's gate -- jump to the start of
                         // the next one and draw a FRESH candidate from
                         // there, rather than treating that boundary itself
                         // as a candidate. The latter was a real bug: any
                         // value that's exactly a period boundary always has
-                        // offset_in_period == 0, which always satisfies the
+                        // offsetInPeriod == 0, which always satisfies the
                         // gate check above, so it would have deterministically
                         // produced a "detection" -- coincident with that
                         // period's sync pulse -- on every single jump,
@@ -560,21 +560,21 @@ class IteratorBase {
                         // exponential distribution is memoryless, so
                         // resetting the draw from the new gate's start is
                         // statistically equivalent to continuing the same
-                        // rate-kSimulatedPhotonGateRateHz process and just
+                        // rate-SIMULATED_PHOTON_GATE_RATE_HZ process and just
                         // never observing it during the dead zone.
-                        t = period_start +
-                            static_cast<double>(kSimulatedPixelPeriodPs) +
-                            draw_positive_ps();
+                        t = periodStart +
+                            static_cast<double>(SIMULATED_PIXEL_PERIOD_PS) +
+                            drawPositivePs();
                     }
                 }
             }
 
-            for (channel_t const channel : registered_channels_) {
+            for (channel_t const channel : registeredChannels_) {
                 // See the same check in the gated-photon loop above.
                 if (!running_)
                     break;
-                if (channel == PhotonChannel ||
-                    channel == -PhotonChannel)
+                if (channel == PHOTON_CHANNEL ||
+                    channel == -PHOTON_CHANNEL)
                     continue; // handled above, as a correlated gated pair
 
                 // Hardcoded simulated line-clock/sync signals (see the
@@ -585,18 +585,18 @@ class IteratorBase {
                 // configure a channel's simulated rate/pattern beyond this
                 // fixed set).
                 timestamp_t period = 0;
-                timestamp_t phase_offset = 0;
-                if (channel == LineClockChannel) {
-                    period = line_period_ps;
-                } else if (channel == -LineClockChannel) {
+                timestamp_t phaseOffset = 0;
+                if (channel == LINE_CLOCK_CHANNEL) {
+                    period = linePeriodPs;
+                } else if (channel == -LINE_CLOCK_CHANNEL) {
                     // Real line-clock hardware (e.g. OpenScan-OpenScanNIDAQ's
                     // GenerateLineClock) holds the signal high for one
                     // line's worth of active pixel-clock samples, then low
                     // until the next line's rising edge -- i.e. the falling
                     // edge trails its rising edge by width * pixel_period,
-                    // same as line_period_ps here. This fake deliberately
+                    // same as linePeriodPs here. This fake deliberately
                     // models near-zero retrace/dead-time between lines
-                    // (line_period_ps IS that same width * pixel_period
+                    // (linePeriodPs IS that same width * pixel_period
                     // product -- see its definition above), so the falling
                     // edge lands 1 ps -- the smallest gap this fake's
                     // picosecond resolution can represent -- before the
@@ -606,24 +606,24 @@ class IteratorBase {
                     // order once sorted (std::sort isn't stable), which
                     // used to make consumers unable to rely on seeing the
                     // falling edge before the next rising edge.
-                    period = line_period_ps;
-                    phase_offset = line_period_ps - 1;
-                } else if (channel == SyncChannel) {
-                    period = kSimulatedPixelPeriodPs;
-                } else if (channel == -SyncChannel) {
-                    period = kSimulatedPixelPeriodPs;
-                    phase_offset = kSimulatedSyncPulseWidthPs;
+                    period = linePeriodPs;
+                    phaseOffset = linePeriodPs - 1;
+                } else if (channel == SYNC_CHANNEL) {
+                    period = SIMULATED_PIXEL_PERIOD_PS;
+                } else if (channel == -SYNC_CHANNEL) {
+                    period = SIMULATED_PIXEL_PERIOD_PS;
+                    phaseOffset = SIMULATED_SYNC_PULSE_WIDTH_PS;
                 } else {
                     continue; // no simulated signal on this channel
                 }
 
-                auto it = next_arrival_ps.find(channel);
-                if (it == next_arrival_ps.end()) {
-                    it = next_arrival_ps
-                             .emplace(channel, static_cast<double>(phase_offset))
+                auto it = nextArrivalPs.find(channel);
+                if (it == nextArrivalPs.end()) {
+                    it = nextArrivalPs
+                             .emplace(channel, static_cast<double>(phaseOffset))
                              .first;
                 }
-                while (running_ && it->second < generate_until_ps) {
+                while (running_ && it->second < generateUntilPs) {
                     batch.emplace_back(static_cast<timestamp_t>(it->second),
                                         channel);
                     it->second += static_cast<double>(period);
@@ -632,18 +632,18 @@ class IteratorBase {
             std::sort(batch.begin(), batch.end(),
                       [](Tag const &a, Tag const &b) { return a.time < b.time; });
 
-            next_impl(batch, begin_time, end_time);
-            generated_ps = generate_until_ps;
-            bool const completed_image = generate_until_ps >= next_frame_boundary_ps;
-            if (completed_image)
-                next_frame_boundary_ps += static_cast<double>(frame_period_ps);
+            next_impl(batch, beginTime, endTime);
+            generatedPs = generateUntilPs;
+            bool const completedImage = generateUntilPs >= nextFrameBoundaryPs;
+            if (completedImage)
+                nextFrameBoundaryPs += static_cast<double>(framePeriodPs);
 
             // Pace the backlog: let a slow consumer fall behind by whole
             // images rather than never yielding between them. Unlock
             // first -- this sleep is real wall-clock time, and holding
             // mutex_ across it would block stop()/registerChannel() etc.
             // for the same duration.
-            if (completed_image) {
+            if (completedImage) {
                 lock.unlock();
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
@@ -653,14 +653,14 @@ class IteratorBase {
     TimeTaggerBase *tagger_;
     std::mutex mutex_;
     std::atomic<bool> running_{false};
-    std::thread pump_thread_;
-    std::vector<channel_t> registered_channels_;
+    std::thread pumpThread_;
+    std::vector<channel_t> registeredChannels_;
 };
 
 // Fake-only: the one serial this fake pretends to have plugged in, and the
 // model name it reports for that serial.
-inline constexpr char kFakeSerial[] = "SIM000001";
-inline constexpr char kFakeModel[] = "Simulated Time Tagger";
+inline constexpr char FAKE_SERIAL[] = "SIM000001";
+inline constexpr char FAKE_MODEL[] = "Simulated Time Tagger";
 
 // Fake of createTimeTagger(): connects to the fake device if the serial
 // matches (or is left empty, meaning "first available"), matching real SDK
@@ -669,7 +669,7 @@ inline constexpr char kFakeModel[] = "Simulated Time Tagger";
 // createTimeTaggerVirtual/TimeTaggerHardware/TimeTaggerNetwork; nothing in
 // this project uses those yet (see file-level comment above).
 inline TimeTaggerBase *createTimeTagger(std::string const &serial = "") {
-    if (!serial.empty() && serial != kFakeSerial) {
+    if (!serial.empty() && serial != FAKE_SERIAL) {
         throw std::runtime_error("No Time Tagger device with serial '" +
                                   serial + "' found");
     }
@@ -682,10 +682,10 @@ inline void freeTimeTagger(TimeTaggerBase *tagger) { delete tagger; }
 // serial (matching real SDK's "serial,model" format when requested), so
 // callers can exercise the same enumerate-then-connect path used with real
 // hardware without branching on build mode.
-inline std::vector<std::string> scanTimeTagger(bool include_model_name = false) {
-    if (include_model_name)
-        return {std::string(kFakeSerial) + "," + kFakeModel};
-    return {kFakeSerial};
+inline std::vector<std::string> scanTimeTagger(bool includeModelName = false) {
+    if (includeModelName)
+        return {std::string(FAKE_SERIAL) + "," + FAKE_MODEL};
+    return {FAKE_SERIAL};
 }
 
 // Fake of getTimeTaggerModel(): reports the model for the one serial this
@@ -693,9 +693,9 @@ inline std::vector<std::string> scanTimeTagger(bool include_model_name = false) 
 // an unrecognized serial; we throw, matching createTimeTagger()'s handling
 // of a wrong serial above.
 inline std::string getTimeTaggerModel(std::string const &serial) {
-    if (serial != kFakeSerial) {
+    if (serial != FAKE_SERIAL) {
         throw std::runtime_error("No Time Tagger device with serial '" +
                                   serial + "' found");
     }
-    return kFakeModel;
+    return FAKE_MODEL;
 }

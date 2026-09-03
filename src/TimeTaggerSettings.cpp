@@ -178,11 +178,11 @@ class HistogramBinsSetting {
     static OScDev_Error GetDiscreteValues(OScDev_Setting *, OScDev_NumArray **values) {
         // A discrete range is enforced, but purely for convenience
         // (i.e. no reason I know of that we couldn't widen it later).
-        static const int32_t values_array[] = {
+        static const int32_t valuesArray[] = {
             16, 32, 64, 128, 256, 512, 1024, 2048, 4096,
         };
         *values = OScDev_NumArray_Create();
-        for (int32_t v : values_array) {
+        for (int32_t v : valuesArray) {
             OScDev_NumArray_Append(*values, v);
         }
         return OScDev_OK;

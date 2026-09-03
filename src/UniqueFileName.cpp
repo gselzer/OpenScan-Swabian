@@ -11,14 +11,14 @@ UniqueFileName(std::string const &prefix,
         std::snprintf(suffix, sizeof(suffix), "_%04d", i);
         std::string const candidate = prefix + suffix;
 
-        bool any_exists = false;
+        bool anyExists = false;
         for (auto const &ext : extensions) {
             if (std::filesystem::exists(candidate + ext)) {
-                any_exists = true;
+                anyExists = true;
                 break;
             }
         }
-        if (!any_exists)
+        if (!anyExists)
             return candidate;
     }
     return std::nullopt;

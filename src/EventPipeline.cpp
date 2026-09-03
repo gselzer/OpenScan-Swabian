@@ -18,12 +18,12 @@
 class CallFrameCallbackSink {
     OScDev_Acquisition *acq_;
     uint32_t channel_;
-    uint32_t num_frames_;
-    uint32_t frames_delivered_ = 0;
+    uint32_t numFrames_;
+    uint32_t framesDelivered_ = 0;
 public:
     CallFrameCallbackSink(OScDev_Acquisition *acq, uint32_t channel,
-                           uint32_t num_frames)
-        : acq_(acq), channel_(channel), num_frames_(num_frames) {}
+                           uint32_t numFrames)
+        : acq_(acq), channel_(channel), numFrames_(numFrames) {}
 
     void handle(tcspc::histogram_array_event<> const &event) {
         handle_bucket(event.data_bucket);
@@ -60,7 +60,7 @@ private:
         // tcspc::end_of_processing). Matches BH: it's IntensityImageSink,
         // not HistogramSink, that calls stopFunc() -- the live/intensity
         // branch owns completion, not the full-histogram branch.
-        if (++frames_delivered_ == num_frames_)
+        if (++framesDelivered_ == numFrames_)
             throw tcspc::end_of_processing(
                 "acquisition complete: reached requested frame count");
     }
@@ -396,7 +396,7 @@ auto make_processor(
     // that takes. To model real behavior (and let this exact
     // stop_with_error path actually be exercised, instead of an
     // ever-growing backlog), PumpLoop should detect when it can't keep up
-    // (e.g. via something like the reverted kMaxSimulatedStepPs idea) and
+    // (e.g. via something like the reverted MAX_SIMULATED_STEP_PS idea) and
     // emit synthetic overflow tags for the excess span instead of
     // silently retaining or silently dropping it. Also worth reconsidering
     // once that exists: whether stop_with_error (a hard stop) is still the

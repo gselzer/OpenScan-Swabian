@@ -8,7 +8,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-// Only for the Tag struct/LineClockChannel constant, to decode the raw dump
+// Only for the Tag struct/LINE_CLOCK_CHANNEL constant, to decode the raw dump
 // byte-for-byte in the same layout EventPipeline.cpp wrote it -- this test
 // otherwise only drives the module through the public OpenScanLib API, like
 // every other test in this directory.
@@ -28,7 +28,7 @@ using namespace test_support;
 namespace {
 
 // The fake Time Tagger's simulated line-clock period is hardcoded to
-// kSimulatedLineWidthPixels (512) * pixel period (see
+// SIMULATED_LINE_WIDTH_PIXELS (512) * pixel period (see
 // src/fake_timetagger/include/TimeTagger.h's PumpLoop) -- a different ROI
 // here would open pixel windows covering only part of each simulated line,
 // silently dropping the rest of that line's photons as "dead time", so
@@ -284,17 +284,17 @@ TEST_CASE("Save Raw Data writes every registered channel, including the "
     bool sawFallingPhoton = false;
     Tag tag;
     while (file.read(reinterpret_cast<char *>(&tag), sizeof(Tag))) {
-        if (tag.channel == LineClockChannel)
+        if (tag.channel == LINE_CLOCK_CHANNEL)
             sawRisingLineClock = true;
-        else if (tag.channel == -LineClockChannel)
+        else if (tag.channel == -LINE_CLOCK_CHANNEL)
             sawFallingLineClock = true;
-        if (tag.channel == SyncChannel)
+        if (tag.channel == SYNC_CHANNEL)
             sawRisingSync = true;
-        else if (tag.channel == -SyncChannel)
+        else if (tag.channel == -SYNC_CHANNEL)
             sawFallingSync = true;
-        if (tag.channel == PhotonChannel)
+        if (tag.channel == PHOTON_CHANNEL)
             sawRisingPhoton = true;
-        else if (tag.channel == -PhotonChannel)
+        else if (tag.channel == -PHOTON_CHANNEL)
             sawFallingPhoton = true;
     }
     CHECK(sawRisingLineClock);
