@@ -491,26 +491,17 @@ EventPipeline::~EventPipeline() {
 }
 
 bool EventPipeline::next_impl(std::vector<Tag> &incoming_tags, timestamp_t begin_time, timestamp_t end_time) {
+    // TODO: One idea is that, to minimize the chance of tag buildup (and then losing data),
+    // all this thread should do is to push the tags onto a libtcspc buffer (which we will have to add to the pipeline),
+    // and then have another thread responsible for pumping tags out of the buffer. That would require a little more
+    // coordination. Mark is pretty sure this will be needed.
+    //
+    // TODO: Create and handle TimeReachedEvents for the end_time timestamp (can't hurt to do begin_time as well)
     OScDev_Log_Info(device_, ("EventPipeline::next_impl: " + std::to_string(incoming_tags.size()) + " tags, begin_time= " + std::to_string(begin_time) + ", end_time= " + std::to_string(end_time)).c_str());
     try {
-        // Note arrival of begin_time
-        if (lastEnd_ && begin_time > *lastEnd_) {
-            pipeline_.handle(tcspc::begin_lost_interval_event<abstime_type>{*lastEnd_});
-            pipeline_.handle(tcspc::end_lost_interval_event<abstime_type>{begin_time});
-        }
-        else {
-            pipeline_.handle(tcspc::time_reached_event<abstime_type>{begin_time});
-        }
-
-        // Handle all the tags in this batch
         for (auto const &tag : incoming_tags) {
             pipeline_.handle(std::bit_cast<tcspc::swabian_tag_event>(tag));
         }
-
-        // Note arrival of end_time
-        pipeline_.handle(tcspc::time_reached_event<abstime_type>{end_time});
-        lastEnd_ = end_time;
-
     } catch (tcspc::end_of_processing const &e) {
         // Documented libtcspc protocol (see errors.hpp): a processor
         // signals a clean, non-error completion by flushing its own

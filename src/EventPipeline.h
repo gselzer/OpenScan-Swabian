@@ -4,7 +4,6 @@
 #include <TimeTaggerPrivate.h>
 
 #include <memory>
-#include <optional>
 #include <vector>
 
 using abstime_type = tcspc::default_numeric_traits::abstime_type;
@@ -36,7 +35,6 @@ protected:
     void on_stop() override;
 
 private:
-    std::optional<abstime_type> lastEnd_;
     OScDev_Device *device_;
     tcspc::type_erased_processor<tcspc::type_list<tcspc::swabian_tag_event>> pipeline_;
     tcspc::buffer_accessor accessor_;
