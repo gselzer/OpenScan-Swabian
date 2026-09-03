@@ -420,8 +420,27 @@ class IteratorBase {
         // the tag rate that would produce.
         constexpr timestamp_t line_period_ps =
             kSimulatedLineWidthPixels * kSimulatedPixelPeriodPs;
+        // Assumes a square frame (kSimulatedLineWidthPixels lines, same as
+        // the line width in pixels) -- matches this fake's only supported
+        // resolution (see test_acquisition.cpp's kResolution comment).
+        constexpr timestamp_t frame_period_ps =
+            kSimulatedLineWidthPixels * line_period_ps;
 
+        // elapsed_ps free-runs with the wall clock; generated_ps/
+        // next_frame_boundary_ps cap how much of it any one iteration is
+        // allowed to turn into tags. Without that cap, a downstream
+        // consumer that falls behind real time causes every subsequent
+        // iteration to see a larger elapsed_s (it's been longer since the
+        // last, slower, next_impl() call returned), which generates an
+        // even bigger batch, taking next_impl() even longer -- an
+        // unbounded feedback loop whose batches only ever grow. Capping
+        // generation to one frame per iteration turns that into a bounded
+        // backlog of whole frames instead, and keeps next_impl() calls
+        // (and therefore how long Stop has to wait before running_ is
+        // rechecked) bounded to at most one frame's worth of tags.
         double elapsed_ps = 0.0;
+        double generated_ps = 0.0;
+        double next_frame_boundary_ps = static_cast<double>(frame_period_ps);
         auto last = std::chrono::steady_clock::now();
         std::mt19937_64 rng{std::random_device{}()};
         std::map<channel_t, double> next_arrival_ps;
@@ -436,9 +455,11 @@ class IteratorBase {
                     now - last)
                     .count();
             last = now;
-            timestamp_t const begin_time = static_cast<timestamp_t>(elapsed_ps);
             elapsed_ps += elapsed_s * 1e12;
-            timestamp_t const end_time = static_cast<timestamp_t>(elapsed_ps);
+            double const generate_until_ps =
+                std::min(elapsed_ps, next_frame_boundary_ps);
+            timestamp_t const begin_time = static_cast<timestamp_t>(generated_ps);
+            timestamp_t const end_time = static_cast<timestamp_t>(generate_until_ps);
 
             auto lock = getLock();
             if (!running_)
@@ -493,7 +514,7 @@ class IteratorBase {
                     if (!running_)
                         break;
                     double &t = *next_photon_candidate_ps;
-                    if (t >= elapsed_ps)
+                    if (t >= generate_until_ps)
                         break;
                     auto const period_index = static_cast<std::int64_t>(
                         t / static_cast<double>(kSimulatedPixelPeriodPs));
@@ -602,7 +623,7 @@ class IteratorBase {
                              .emplace(channel, static_cast<double>(phase_offset))
                              .first;
                 }
-                while (running_ && it->second < elapsed_ps) {
+                while (running_ && it->second < generate_until_ps) {
                     batch.emplace_back(static_cast<timestamp_t>(it->second),
                                         channel);
                     it->second += static_cast<double>(period);
@@ -612,6 +633,20 @@ class IteratorBase {
                       [](Tag const &a, Tag const &b) { return a.time < b.time; });
 
             next_impl(batch, begin_time, end_time);
+            generated_ps = generate_until_ps;
+            bool const completed_image = generate_until_ps >= next_frame_boundary_ps;
+            if (completed_image)
+                next_frame_boundary_ps += static_cast<double>(frame_period_ps);
+
+            // Pace the backlog: let a slow consumer fall behind by whole
+            // images rather than never yielding between them. Unlock
+            // first -- this sleep is real wall-clock time, and holding
+            // mutex_ across it would block stop()/registerChannel() etc.
+            // for the same duration.
+            if (completed_image) {
+                lock.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
         }
     }
 
