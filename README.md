@@ -58,9 +58,14 @@ logs a warning — set `TIMETAGGER_INSTALL_PATH` yourself if the SDK is
 installed somewhere else.
 
 ```
-meson setup builddir
+meson setup builddir --buildtype=release
 meson compile -C builddir
 ```
+
+> [!NOTE]
+> `--buildtype=release` is important, as [libtcspc](https://github.com/marktsuchida/libtcspc)
+> is optimization-sensitive, showing up directly in this module's live-acquisition
+> throughput.
 
 ### Simulation
 
@@ -69,7 +74,7 @@ hardware or vendor SDK installation needed, useful for developing and
 testing the pipeline itself:
 
 ```
-meson setup builddir -Dsimulate=true
+meson setup builddir -Dsimulate=true --buildtype=release
 meson compile -C builddir
 ```
 
